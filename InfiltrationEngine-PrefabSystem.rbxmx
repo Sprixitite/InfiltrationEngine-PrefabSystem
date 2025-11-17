@@ -1,0 +1,342 @@
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+	<External>null</External>
+	<External>nil</External>
+	<Item class="Folder" referent="RBX7CDB87DC731B42A49D947469949E22C9">
+		<Properties>
+			<BinaryString name="AttributesSerialize"></BinaryString>
+			<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+			<bool name="DefinesCapabilities">false</bool>
+			<string name="Name">InfiltrationEngine-PrefabSystem</string>
+			<int64 name="SourceAssetId">-1</int64>
+			<BinaryString name="Tags"></BinaryString>
+		</Properties>
+		<Item class="Script" referent="RBX6D54C6EA66174FE881BE5E4F6C8523D9">
+			<Properties>
+				<ProtectedString name="Source"><![CDATA[local apiConsumerInit = require(script.Parent.APIConsumer)
+local apiConsumer = apiConsumerInit(plugin)
+
+type SerializerAPI = apiConsumerInit.SerializerAPI
+
+local API_ID = "InfiltrationEngine-PrefabSystem"
+
+local builtinStateVariables = {
+	PrefabId = function(prefab: Folder, prefabElement: Instance, state)
+		
+	end,
+}
+
+local prefabSystem = {}
+
+function prefabSystem.OnAPILoaded(api: SerializerAPI, prefabSystemState)
+	prefabSystemState.ExportCallbackToken = api.AddHook("PreSerialize", API_ID, prefabSystem.OnSerializerExport)
+end
+
+function prefabSystem.OnAPIUnloaded(api: SerializerAPI, prefabSystemState)
+	if prefabSystemState.ExportCallbackToken then
+		-- More of a formality than anything in this case
+		-- Hooks should be GC'd after serializer unload
+		api.RemoveHook("PreSerialize", prefabSystemState.ExportCallbackToken)
+	end
+end
+
+function prefabSystem.OnSerializerExport(mission: Folder)
+	local prefabFolder = mission:FindFirstChild("Prefabs")
+	if not prefabFolder then return end
+	
+	for _, prefab in ipairs(prefabFolder:GetChildren()) do
+		if not prefab:IsA("Folder") then
+			warn(`Prefab {prefab.Name} is invalid - expected Folder, got {prefab.ClassName}. Skipping.`)
+			continue
+		end
+		
+		prefabSystem.UnpackPrefab(mission, prefab, "Static")
+	end
+	
+	local prefabInstanceFolder = mission:FindFirstChild("PrefabInstances")
+	if not prefabInstanceFolder then
+		-- Prevents prefabs from being exported & wasting space in the mission code
+		prefabFolder:Destroy()
+		return
+	end
+	
+	for _, prefabInstance in ipairs(prefabInstanceFolder:GetChildren()) do
+		if not prefabInstance:IsA("BasePart") then
+			warn(`PrefabInstance {prefabInstance.Name} is invalid - expected BasePart, got {prefabInstance.ClassName}. Skipping.`)
+			continue
+		end
+		
+		local prefabInstanceType = prefabInstance:GetAttribute("PrefabName")
+		if type(prefabInstanceType) ~= "string" then
+			warn(`PrefabInstance {prefabInstance.Name} is invalid - PrefabName attribute is of wrong datatype or otherwise invalid. Skipping.`)
+			continue
+		end
+		
+		local instantiatingPrefab = prefabFolder:FindFirstChild(prefabInstanceType)
+		if instantiatingPrefab == nil then
+			warn(`PrefabInstance {prefabInstance.Name} is invalid - PrefabName points to non-existing prefab {prefabInstanceType}. Skipping.`)
+			continue
+		end
+		
+		prefabSystem.InstantiatePrefab(mission, instantiatingPrefab, prefabInstance)
+	end
+	
+	-- Prevent these from being exported and taking up mission space
+	prefabFolder:Destroy()
+	prefabInstanceFolder:Destroy()
+end
+
+function prefabSystem.UnpackPrefab(mission: Folder, prefab: Folder, scope: string)
+	for _, prefabTargetGroup in ipairs(prefab:GetChildren()) do
+		if not prefabTargetGroup:IsA("Folder") then
+			warn(`PrefabTargetGroup {prefabTargetGroup.Name} is invalid - expected Folder, got {prefabTargetGroup.ClassName}. Skipping.`)
+			continue
+		end
+		
+		if not prefabTargetGroup.Name:lower():find(`^{scope:lower()}`) then continue end
+		prefabSystem.UnpackPrefabTargets(mission, prefabTargetGroup)
+	end
+end
+
+function prefabSystem.UnpackPrefabTargets(mission: Folder, targetGroup: Folder)
+	for _, prefabTarget in ipairs(targetGroup:GetChildren()) do
+		if prefabTarget.Name == "InstanceBase" then continue end
+		
+		if not prefabTarget:IsA("Folder") then
+			warn(`PrefabTarget {prefabTarget.Name} is invalid - expected Folder, got {prefabTarget.ClassName}. Skipping.`)
+			continue
+		end
+
+		local missionPrefabTarget = mission:FindFirstChild(prefabTarget.Name) 
+		if missionPrefabTarget == nil then warn(`Prefab target {prefabTarget.Name} does not exist! Create it if needed.`) continue end
+		for _, prefabTargetItem in ipairs(prefabTarget:GetChildren()) do
+			prefabTargetItem:Clone().Parent = missionPrefabTarget 
+		end
+	end
+end
+
+function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabInstance: BasePart)
+	local instanceTargetGroup = prefab:FindFirstChild("Instance") or prefab:FindFirstChild("instance")
+	if not instanceTargetGroup then
+		warn(`Prefab {prefab.Name} may not be instantiated!`)
+		return
+	end
+	
+	local instanceData = instanceTargetGroup:Clone()
+	local instanceBase = instanceData:FindFirstChild("InstanceBase")
+	if not instanceBase then
+		warn(`Prefab {prefab.Name} has an Instance folder but no InstanceBase part!`)
+		return
+	end
+	
+	if not instanceBase:IsA("Part") then
+		warn(`Prefab {prefab.Name} has an InstanceBase but it is not a part!`)
+		return
+	end
+	
+	local instanceSettings = instanceBase:GetAttributes()
+	for settingName, instanceValue in pairs(prefabInstance:GetAttributes()) do
+		if settingName == "PrefabName" then continue end
+		
+		local defaultValue = instanceSettings[settingName] 
+		if defaultValue == nil then
+			warn(`Attribute {settingName} is not valid for instances of prefab {prefab.Name}! Ignoring.`)
+			continue
+		end
+		
+		if type(defaultValue) ~= type(instanceValue) then
+			warn(`{prefabInstance.Parent.Name}.{prefabInstance.Name} : Attribute {settingName} is expected to be of type {type(defaultValue)} for instances of prefab {prefab.Name}, but got {type(instanceValue)}! Ignoring.`)
+			continue
+		end
+		
+		instanceSettings[settingName] = instanceValue
+	end
+	
+	prefabSystem.DeepAttributeInterpolate(prefab, instanceData, instanceSettings)
+	
+	for _, prefabElement in pairs(instanceData:GetDescendants()) do
+		if prefabElement == instanceBase then continue end
+		if not prefabElement:IsA("BasePart") then continue end
+		local baseToElement = instanceBase.CFrame:ToObjectSpace(prefabElement.CFrame)
+		prefabElement.CFrame = prefabInstance.CFrame:ToWorldSpace(baseToElement)
+	end
+	
+	prefabSystem.UnpackPrefabTargets(mission, instanceData)
+end
+
+local ATTRIBUTE_SUBSTITUTION_PATTERN = "%$%(([_%w]+)%)"
+function prefabSystem.DeepAttributeInterpolate(prefab: Folder, root: Instance, state: { [string] : any })
+	for attrName, attrValue in pairs(root:GetAttributes()) do
+		if type(attrValue) ~= "string" then continue end
+		local success, interpolatedAttrValue = prefabSystem.InterpolateValue(prefab, root, attrValue, state)
+		if not success then continue end
+		root:SetAttribute(attrName, interpolatedAttrValue)
+	end
+	
+	local success, interpolatedName = prefabSystem.InterpolateValue(prefab, root, root.Name, state)
+	if success and type(interpolatedName) == "string" then
+		root.Name = interpolatedName
+	elseif success then
+		warn(`Attribute Interpolation : {root.Parent.Name}.{root.Name} : Name interpolation resolved to a non-string value!`)
+	end
+	
+	for _, child in ipairs(root:GetChildren()) do
+		prefabSystem.DeepAttributeInterpolate(prefab, child, state)
+	end
+end
+
+function prefabSystem.InterpolateValue(prefab: Folder, element: Instance, value: string, state: { [string] : any }) : any
+	local fullReplaceName = string.match(value, `^{ATTRIBUTE_SUBSTITUTION_PATTERN}$`)
+	if fullReplaceName ~= nil then
+		local fullReplaceValue = state[fullReplaceName]
+		if fullReplaceValue == nil then
+			warn(`Attribute Interpolation : {element.Parent.Name}.{element.Name} : Full-Substitute variable \"{fullReplaceName}\" not found!`)
+			return false, nil
+		end
+		return true, fullReplaceValue
+	end
+	
+	return true, string.gsub(value, ATTRIBUTE_SUBSTITUTION_PATTERN, function(subName)
+		local subValue = state[subName]
+		if subValue == nil then
+			warn(`Attribute Interpolation : {element.Parent.Name}.{element.Name} : Partial-Substitute variable \"{subName}\" not found!`)
+		end
+		return tostring(subValue) or `ATTRSUB_FAIL_{subName}_NOTFOUND`
+	end)
+end
+
+apiConsumer.DoAPILoop(API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnAPIUnloaded)]]></ProtectedString>
+				<bool name="Disabled">false</bool>
+				<Content name="LinkedSource"><null></null></Content>
+				<token name="RunContext">0</token>
+				<string name="ScriptGuid">{2EFB673D-CAA3-471F-972B-512807FDA430}</string>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+				<bool name="DefinesCapabilities">false</bool>
+				<string name="Name">Main</string>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBXF088CDA7CABF42EBA900D9C516EB4070">
+			<Properties>
+				<Content name="LinkedSource"><null></null></Content>
+				<ProtectedString name="Source"><![CDATA[--[[
+	This module is provided for convenience of consumers of the serializer API
+	providing a reference implementation for correctly retrieving and validating a reference to the API table
+]]
+
+local coreGui = game:GetService("CoreGui")
+
+type SerializerToken = string
+type SerializerHook = (...any) -> nil
+type SerializerHookType = "APIExtensionLoaded"|"APIExtensionUnloaded"|"PreSerialize"|"SerializerUnloaded"
+type SerializerAPIExtension = { [string] : (...any) -> ...any }
+
+export type SerializerAPI = {
+	-- Generic
+	GetAPIVersion 		: () -> number,
+	GetCodeVersion 		: () -> number,
+	GetAttributesMap 	: () -> { [string] : { [number] : any } },
+	GetAttributeTypes 	: () -> { [string] : number },
+
+	-- HookTypes
+	GetHookTypes 		: () -> { [number] : string },
+	IsHookTypeValid 	: (hookType: string, warnCaller: string?) -> boolean,
+
+	-- Hooks
+	AddHook 			: (hookType: SerializerHookType, registrant: string, hook: SerializerHook) -> SerializerToken,
+	RemoveHook 			: (hookType: SerializerHookType, token: SerializerToken) -> nil,
+
+	-- APIExtensions
+	AddAPIExtension 	: (name: string, author: string, contents: SerializerAPIExtension) -> SerializerToken,
+	GetAPIExtension		: (name: string, author: string) -> SerializerAPIExtension,
+	RemoveAPIExtension	: (token: SerializerToken) -> nil
+}
+
+type AnyTbl = { [string] : any }
+
+local APIConsumer = {}
+local pluginSingleton = nil
+local pluginUnloadCallback = nil
+
+APIConsumer.ValidateArgTypes = function(fname: string, ...)
+	local args = {...}
+	for _, argSettings in ipairs(args) do
+		local argName = argSettings[1]
+		local argValue = argSettings[2]
+		local argType = type(argValue)
+		local argExpectedType = argSettings[3]
+		if argType ~= argExpectedType then
+			warn(`Invalid argument {argName} passed to API function {fname} - expected type {argExpectedType} but got {argType}!`)
+			return false
+		end
+	end
+	return true
+end
+
+-- Yields until timeOut is elapsed or API is found
+APIConsumer.WaitForAPI = function(timeOut: number?) : SerializerAPI?
+	timeOut = timeOut or 999_999_999_999
+
+	local presenceIndicator = coreGui:WaitForChild("InfilEngine_SerializerAPIAvailable", timeOut)
+	if not presenceIndicator then return end
+
+	local apiTbl = shared.InfilEngine_SerializerAPI
+	if not (tostring(apiTbl) == presenceIndicator.Value) then return end
+
+	return apiTbl
+end
+
+APIConsumer.DoAPILoop = function<StateT>(
+	srcname: string,
+	loadedClbck: (api: SerializerAPI, state:StateT) -> nil,
+	unloadedClbck: (api: SerializerAPI, state: StateT) -> nil, 
+	state: StateT?
+) : SerializerAPI
+	state = state or {}
+
+	if not APIConsumer.ValidateArgTypes(
+		"DoAPILoop", 
+		{"srcname", srcname, "string"},
+		{"loadedClbck", loadedClbck, "function"},
+		{"unloadedClbck", unloadedClbck, "function"},
+		{"state", state, "table"}
+		) then return end
+
+	local api = APIConsumer.WaitForAPI()
+	if api == nil then return APIConsumer.DoAPILoop(srcname, loadedClbck, unloadedClbck, state) end
+
+	loadedClbck(api, state)
+	api.AddHook("SerializerUnloaded", `APIConsumerFramework_{srcname}`, function()
+		if pluginUnloadCallback then pluginUnloadCallback:Disconnect() pluginUnloadCallback = nil end
+		unloadedClbck(api, state)
+		APIConsumer.DoAPILoop(srcname, loadedClbck, unloadedClbck, state)
+	end)
+
+	pluginUnloadCallback = pluginSingleton.Unloading:Connect(function()
+		pluginUnloadCallback:Disconnect()
+		pluginUnloadCallback = nil
+		unloadedClbck(api, state)
+	end)
+end
+
+local function initAPIConsumer(callerPlugin)
+	if false then return APIConsumer end -- Fixes type inference, don't ask
+	if typeof(callerPlugin) ~= "Instance" then return nil end
+	if callerPlugin.ClassName ~= "Plugin" then return nil end
+	pluginSingleton = callerPlugin
+	return APIConsumer
+end
+
+return initAPIConsumer]]></ProtectedString>
+				<string name="ScriptGuid">{9C413FEA-27C9-4E1A-A9CC-E7239C0F162A}</string>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+				<bool name="DefinesCapabilities">false</bool>
+				<string name="Name">APIConsumer</string>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+		</Item>
+	</Item>
+</roblox>

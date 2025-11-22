@@ -1,16 +1,19 @@
 --[[
 	This module is provided for convenience of consumers of the serializer API
 	providing a reference implementation for correctly retrieving and validating a reference to the API table
+
+	For a working example of a plugin making use of this API via this module
+	see: https://github.com/Sprixitite/InfiltrationEngine-PrefabSystem
 ]]
 
 local coreGui = game:GetService("CoreGui")
 
-type SerializerToken = string
-type SerializerHook = (...any) -> nil
-type SerializerHookType = "APIExtensionLoaded"|"APIExtensionUnloaded"|"PreSerialize"|"SerializerUnloaded"
-type SerializerAPIExtension = { [string] : (...any) -> ...any }
+export type Token = string
+export type Hook = (...any) -> nil
+export type HookType = "APIExtensionLoaded"|"APIExtensionUnloaded"|"PreSerialize"|"SerializerUnloaded"
+export type APIExtension = { [string] : (...any) -> ...any }
 
-export type SerializerAPI = {
+export type APIReference = {
 	-- Generic
 	GetAPIVersion 		: () -> number,
 	GetCodeVersion 		: () -> number,
@@ -22,22 +25,20 @@ export type SerializerAPI = {
 	IsHookTypeValid 	: (hookType: string, warnCaller: string?) -> boolean,
 
 	-- Hooks
-	AddHook 			: (hookType: SerializerHookType, registrant: string, hook: SerializerHook) -> SerializerToken,
-	RemoveHook 			: (hookType: SerializerHookType, token: SerializerToken) -> nil,
+	AddHook 			: (hookType: HookType, registrant: string, hook: Hook, hookState: {any}?) -> Token,
+	RemoveHook 			: (token: Token) -> nil,
 
 	-- APIExtensions
-	AddAPIExtension 	: (name: string, author: string, contents: SerializerAPIExtension) -> SerializerToken,
-	GetAPIExtension		: (name: string, author: string) -> SerializerAPIExtension,
-	RemoveAPIExtension	: (token: SerializerToken) -> nil
+	AddAPIExtension 	: (name: string, author: string, contents: APIExtension) -> Token,
+	GetAPIExtension		: (name: string, author: string) -> APIExtension,
+	RemoveAPIExtension	: (token: Token) -> nil
 }
 
 type AnyTbl = { [string] : any }
 
 local APIConsumer = {}
-local pluginSingleton = nil
-local pluginUnloadCallback = nil
 
-APIConsumer.ValidateArgTypes = function(fname: string, ...)
+local function ValidateArgTypes(fname: string, ...) : boolean
 	local args = {...}
 	for _, argSettings in ipairs(args) do
 		local argName = argSettings[1]
@@ -45,16 +46,23 @@ APIConsumer.ValidateArgTypes = function(fname: string, ...)
 		local argType = type(argValue)
 		local argExpectedType = argSettings[3]
 		if argType ~= argExpectedType then
-			warn(`Invalid argument {argName} passed to API function {fname} - expected type {argExpectedType} but got {argType}!`)
+			warn(`Invalid argument {argName} passed to function {fname} - expected type {argExpectedType} but got {argType}!`)
 			return false
 		end
 	end
 	return true
 end
 
+APIConsumer.ValidateArgTypes = ValidateArgTypes
+
 -- Yields until timeOut is elapsed or API is found
-APIConsumer.WaitForAPI = function(timeOut: number?) : SerializerAPI?
-	timeOut = timeOut or 999_999_999_999
+APIConsumer.WaitForAPI = function(timeOut: number?) : APIReference?
+	timeOut = if timeOut == nil then math.huge else timeOut
+
+	if not ValidateArgTypes(
+		"WaitForAPI",
+		{"timeOut", timeOut, "number"}
+		) then return end
 
 	local presenceIndicator = coreGui:WaitForChild("InfilEngine_SerializerAPIAvailable", timeOut)
 	if not presenceIndicator then return end
@@ -65,15 +73,29 @@ APIConsumer.WaitForAPI = function(timeOut: number?) : SerializerAPI?
 	return apiTbl
 end
 
+-- Never returns unless there's an error
+-- Continually wires up handling of serializer load/unload as well as unloading of consumer plugin as needed
+-- Avoid doing this yourself if you can help it
 APIConsumer.DoAPILoop = function<StateT>(
+	callerPlugin: Plugin,
 	srcname: string,
-	loadedClbck: (api: SerializerAPI, state:StateT) -> nil,
-	unloadedClbck: (api: SerializerAPI, state: StateT) -> nil, 
+	loadedClbck: (api: APIReference, state: StateT) -> nil,
+	unloadedClbck: (api: APIReference, state: StateT) -> nil, 
 	state: StateT?
-) : SerializerAPI
-	state = state or {}
+) : never
+	state = if state == nil then {} else state
 
-	if not APIConsumer.ValidateArgTypes(
+	if typeof(callerPlugin) ~= "Instance" then
+		warn(`Invalid argument callerPlugin passed to DoAPILoop - expected type Plugin but got {typeof(callerPlugin)}!`)
+		return
+	end
+
+	if callerPlugin.ClassName ~= "Plugin" then
+		warn(`Invalid argument callerPlugin passed to DoAPILoop - expected type Plugin but got {callerPlugin.ClassName}!`)
+		return
+	end
+
+	if not ValidateArgTypes(
 		"DoAPILoop", 
 		{"srcname", srcname, "string"},
 		{"loadedClbck", loadedClbck, "function"},
@@ -82,28 +104,23 @@ APIConsumer.DoAPILoop = function<StateT>(
 		) then return end
 
 	local api = APIConsumer.WaitForAPI()
-	if api == nil then return APIConsumer.DoAPILoop(srcname, loadedClbck, unloadedClbck, state) end
+	if api == nil then return APIConsumer.DoAPILoop(callerPlugin, srcname, loadedClbck, unloadedClbck, state) end
 
 	loadedClbck(api, state)
-	api.AddHook("SerializerUnloaded", `APIConsumerFramework_{srcname}`, function()
-		if pluginUnloadCallback then pluginUnloadCallback:Disconnect() pluginUnloadCallback = nil end
-		unloadedClbck(api, state)
-		APIConsumer.DoAPILoop(srcname, loadedClbck, unloadedClbck, state)
-	end)
 
-	pluginUnloadCallback = pluginSingleton.Unloading:Connect(function()
+	local pluginUnloadCallback
+
+	pluginUnloadCallback = callerPlugin.Unloading:Connect(function()
 		pluginUnloadCallback:Disconnect()
 		pluginUnloadCallback = nil
 		unloadedClbck(api, state)
 	end)
+
+	api.AddHook("SerializerUnloaded", `APIConsumerFramework_{srcname}`, function()
+		if pluginUnloadCallback then pluginUnloadCallback:Disconnect() pluginUnloadCallback = nil end
+		unloadedClbck(api, state)
+		APIConsumer.DoAPILoop(callerPlugin, srcname, loadedClbck, unloadedClbck, state)
+	end)
 end
 
-local function initAPIConsumer(callerPlugin)
-	if false then return APIConsumer end -- Fixes type inference, don't ask
-	if typeof(callerPlugin) ~= "Instance" then return nil end
-	if callerPlugin.ClassName ~= "Plugin" then return nil end
-	pluginSingleton = callerPlugin
-	return APIConsumer
-end
-
-return initAPIConsumer
+return APIConsumer

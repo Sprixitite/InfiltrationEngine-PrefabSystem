@@ -1,25 +1,26 @@
-local apiConsumerInit = require(script.Parent.APIConsumer)
-local apiConsumer = apiConsumerInit(plugin)
+local apiConsumer = require(script.Parent.APIConsumer)
 
-type SerializerAPI = apiConsumerInit.SerializerAPI
+type APIReference = apiConsumer.APIReference
 
 local API_ID = "InfiltrationEngine-PrefabSystem"
 
 local prefabSystem = {}
 
-function prefabSystem.OnAPILoaded(api: SerializerAPI, prefabSystemState)
+function prefabSystem.OnAPILoaded(api: APIReference, prefabSystemState)
 	prefabSystemState.ExportCallbackToken = api.AddHook("PreSerialize", API_ID, prefabSystem.OnSerializerExport)
 end
 
-function prefabSystem.OnAPIUnloaded(api: SerializerAPI, prefabSystemState)
+function prefabSystem.OnAPIUnloaded(api: APIReference, prefabSystemState)
 	if prefabSystemState.ExportCallbackToken then
-		-- More of a formality than anything in this case
-		-- Hooks should be GC'd after serializer unload
-		api.RemoveHook("PreSerialize", prefabSystemState.ExportCallbackToken)
+		-- The unload function passed to DoAPILoop is called
+		-- both when the API unloads, and when this plugin unloads
+		-- as a result, removing any hooks in the unload function is no longer
+		-- a "formality", but rather required
+		api.RemoveHook(prefabSystemState.ExportCallbackToken)
 	end
 end
 
-function prefabSystem.OnSerializerExport(mission: Folder)
+function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mission: Folder)
 	local prefabFolder = mission:FindFirstChild("Prefabs")
 	if not prefabFolder then return end
 	
@@ -184,4 +185,4 @@ function prefabSystem.InterpolateValue(prefab: Folder, element: Instance, value:
 	end)
 end
 
-apiConsumer.DoAPILoop(API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnAPIUnloaded)
+apiConsumer.DoAPILoop(plugin, API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnAPIUnloaded)

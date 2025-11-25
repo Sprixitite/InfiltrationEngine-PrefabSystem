@@ -212,11 +212,12 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 		instanceSettings[settingName] = instanceValue
 	end
 	
-	prefabSystem.DeepAttributeEvaluator(prefab, instanceData, prefabSystem.InterpolateValue, instanceSettings)
+	local cfrSet = prefabSystem.DeepAttributeEvaluator(prefab, instanceData, prefabSystem.InterpolateValue, instanceSettings)
 	
 	for _, prefabElement in pairs(instanceData:GetDescendants()) do
 		if prefabElement == instanceBase then continue end
 		if not prefabElement:IsA("BasePart") then continue end
+		if cfrSet[prefabElement] then continue end
 		local baseToElement = instanceBase.CFrame:ToObjectSpace(prefabElement.CFrame)
 		prefabElement.CFrame = prefabInstance.CFrame:ToWorldSpace(baseToElement)
 	end
@@ -227,6 +228,7 @@ end
 function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, evaluator, evalData)
 	local warn = warnLogger.new("Attribute Evaluation", `{root.Parent}.{root}`)
 	
+	local whoSetCfr = {}
 	for attrName, attrValue in pairs(root:GetAttributes()) do
 		if type(attrValue) ~= "string" then continue end
 		local success, interpolatedAttrValue = evaluator(prefab, root, attrValue, evalData)
@@ -240,6 +242,7 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 			if not success then
 				warn(`Property {propName} not present on instance`) 
 			end
+			whoSetCfr[root] = propName == "CFrame"
 			root:SetAttribute(attrName, nil)
 			continue
 		end
@@ -255,8 +258,13 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 	end
 	
 	for _, child in ipairs(root:GetChildren()) do
-		prefabSystem.DeepAttributeEvaluator(prefab, child, evaluator, evalData)
+		local childSet = prefabSystem.DeepAttributeEvaluator(prefab, child, evaluator, evalData)
+		for inst, set in pairs(childSet) do
+			whoSetCfr[inst] = set
+		end
 	end
+	
+	return whoSetCfr
 end
 
 local ATTRIBUTE_SUBSTITUTION_PATTERN = "%$%(([_%w]+)%)"

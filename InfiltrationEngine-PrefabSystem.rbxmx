@@ -1,7 +1,7 @@
 <roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
 	<External>null</External>
 	<External>nil</External>
-	<Item class="Folder" referent="RBXC1B37DB6DD914E258C80003B7C36F1CB">
+	<Item class="Folder" referent="RBXED07DD1581814A7FBC76785607E08BA1">
 		<Properties>
 			<BinaryString name="AttributesSerialize"></BinaryString>
 			<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -10,7 +10,7 @@
 			<int64 name="SourceAssetId">-1</int64>
 			<BinaryString name="Tags"></BinaryString>
 		</Properties>
-		<Item class="Script" referent="RBXA4D4674811784A7F81B95A1702C0CA11">
+		<Item class="Script" referent="RBX8BB0DB8B1E8B4D57AA807D2A1EF40275">
 			<Properties>
 				<ProtectedString name="Source"><![CDATA[local apiConsumer = require(script.Parent.APIConsumer)
 local warnLogger = require(script.Parent.Slogger).init{
@@ -226,11 +226,12 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 		instanceSettings[settingName] = instanceValue
 	end
 	
-	prefabSystem.DeepAttributeEvaluator(prefab, instanceData, prefabSystem.InterpolateValue, instanceSettings)
+	local cfrSet = prefabSystem.DeepAttributeEvaluator(prefab, instanceData, prefabSystem.InterpolateValue, instanceSettings)
 	
 	for _, prefabElement in pairs(instanceData:GetDescendants()) do
 		if prefabElement == instanceBase then continue end
 		if not prefabElement:IsA("BasePart") then continue end
+		if cfrSet[prefabElement] then continue end
 		local baseToElement = instanceBase.CFrame:ToObjectSpace(prefabElement.CFrame)
 		prefabElement.CFrame = prefabInstance.CFrame:ToWorldSpace(baseToElement)
 	end
@@ -241,6 +242,7 @@ end
 function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, evaluator, evalData)
 	local warn = warnLogger.new("Attribute Evaluation", `{root.Parent}.{root}`)
 	
+	local whoSetCfr = {}
 	for attrName, attrValue in pairs(root:GetAttributes()) do
 		if type(attrValue) ~= "string" then continue end
 		local success, interpolatedAttrValue = evaluator(prefab, root, attrValue, evalData)
@@ -254,6 +256,7 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 			if not success then
 				warn(`Property {propName} not present on instance`) 
 			end
+			whoSetCfr[root] = propName == "CFrame"
 			root:SetAttribute(attrName, nil)
 			continue
 		end
@@ -269,8 +272,13 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 	end
 	
 	for _, child in ipairs(root:GetChildren()) do
-		prefabSystem.DeepAttributeEvaluator(prefab, child, evaluator, evalData)
+		local childSet = prefabSystem.DeepAttributeEvaluator(prefab, child, evaluator, evalData)
+		for inst, set in pairs(childSet) do
+			whoSetCfr[inst] = set
+		end
 	end
+	
+	return whoSetCfr
 end
 
 local ATTRIBUTE_SUBSTITUTION_PATTERN = "%$%(([_%w]+)%)"
@@ -416,7 +424,7 @@ apiConsumer.DoAPILoop(plugin, API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnA
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBXF64FEADEF1C84448BE2D0684ABCA5AEB">
+		<Item class="ModuleScript" referent="RBX49FCF3076B7545F68AD91D4A68C92B7A">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -554,7 +562,7 @@ return APIConsumer]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX41B94A1BC2EB444A867010C4406080C4">
+		<Item class="ModuleScript" referent="RBXC60B8FC568F247F89DD735F2AAF9FF65">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[

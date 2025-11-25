@@ -1,7 +1,7 @@
 <roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
 	<External>null</External>
 	<External>nil</External>
-	<Item class="Folder" referent="RBX6407058E802D4D02A02FD5514EBFFE33">
+	<Item class="Folder" referent="RBXC1B37DB6DD914E258C80003B7C36F1CB">
 		<Properties>
 			<BinaryString name="AttributesSerialize"></BinaryString>
 			<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -10,15 +10,80 @@
 			<int64 name="SourceAssetId">-1</int64>
 			<BinaryString name="Tags"></BinaryString>
 		</Properties>
-		<Item class="Script" referent="RBX7FFDD61EE4DF4743A5B704483561B8ED">
+		<Item class="Script" referent="RBXA4D4674811784A7F81B95A1702C0CA11">
 			<Properties>
 				<ProtectedString name="Source"><![CDATA[local apiConsumer = require(script.Parent.APIConsumer)
+local warnLogger = require(script.Parent.Slogger).init{
+	postInit = table.freeze,
+	logFunc = warn
+}
 
 type APIReference = apiConsumer.APIReference
 
 local API_ID = "InfiltrationEngine-PrefabSystem"
 
 local prefabSystem = {}
+
+local function CheckArgCountRange(fname, expectedMin, expectedMax, ...)
+	local argCount = select('#', ...)
+	if argCount < expectedMin or argCount > expectedMax then
+		local expected = (expectedMin == expectedMax) and expectedMin-2 or `{expectedMin-2}-{expectedMax-2}`
+		error(`{fname} expects {expected} arguments, but got {argCount}!`)
+	end
+end
+
+local function CheckArgCount(fname, expected, ...) CheckArgCountRange(fname, expected, expected, ...) end
+
+local PREFAB_IDS = {}
+local ELEMENT_IDS = {}
+
+local function GetId(tbl, inst)
+	local existing = tbl[inst]
+	if existing ~= nil then return existing end
+	
+	local max = tbl.Total or 0
+	tbl[inst] = max
+	tbl.Total = max + 1
+	return max
+end
+
+local function strKeySub(str, key, value)
+	key = tostring(key)
+	value = tostring(value)
+	return string.gsub(str, "([^{]){" .. key .. "}([^}])", function(d1, d2)
+		return d1 .. value .. d2
+	end)
+end
+
+local SPECIAL_FUNCS = {
+	this_prop = function(prefab, element, property, ...)
+		CheckArgCount("SpecFunc.this", 3, prefab, element, property, ...)
+		return element[property]
+	end,
+	child_prop = function(prefab, element, child, property, ...)
+		CheckArgCount("SpecFunc.child", 4, prefab, element, child, property, ...)
+		return element:FindFirstChild(child)[property]
+	end,
+	this_attr = function(prefab, element, attrname, ...)
+		CheckArgCount("SpecFunc.this_attr", 3, prefab, element, attrname, ...)
+		return element:GetAttribute(attrname)
+	end,
+	child_attr = function(prefab, element, child, attrname, ...)
+		CheckArgCount("SpecFunc.child_attr", 4, prefab, element, child, attrname, ...)
+		return element:FindFirstChild(child):GetAttribute(attrname)
+	end,
+	str_varsub = function(prefab, element, str, ...)
+		CheckArgCount("SpecFunc.str_id_sub", 3, prefab, element, str, ...)
+		local temp = ` {str} `
+		temp = strKeySub(temp, "pid", GetId(PREFAB_IDS, prefab))
+		temp = strKeySub(temp, "eid", GetId(ELEMENT_IDS, element))
+		temp = strKeySub(temp, "pname", prefab.Name)
+		temp = strKeySub(temp, "ename", element.Name)
+		temp = strKeySub(temp, "rand", math.random(0, 9999))
+		temp = temp:gsub("{{", "{"):gsub("}}", "}"):sub(2, -2)
+		return temp
+	end,
+}
 
 function prefabSystem.OnAPILoaded(api: APIReference, prefabSystemState)
 	prefabSystemState.ExportCallbackToken = api.AddHook("PreSerialize", API_ID, prefabSystem.OnSerializerExport)
@@ -35,12 +100,13 @@ function prefabSystem.OnAPIUnloaded(api: APIReference, prefabSystemState)
 end
 
 function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mission: Folder)
+	local warn = warnLogger.new("OnSerializerExport")
 	local prefabFolder = mission:FindFirstChild("Prefabs")
 	if not prefabFolder then return end
 	
 	for _, prefab in ipairs(prefabFolder:GetChildren()) do
 		if not prefab:IsA("Folder") then
-			warn(`Prefab {prefab.Name} is invalid - expected Folder, got {prefab.ClassName}. Skipping.`)
+			warn(`Prefab {prefab.Name} is invalid`, `Expected Folder, got {prefab.ClassName}`, "Prefab Will Be Ignored")
 			continue
 		end
 		
@@ -55,20 +121,22 @@ function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mis
 	end
 	
 	for _, prefabInstance in ipairs(prefabInstanceFolder:GetChildren()) do
+		local warn = warn.specialize(`PrefabInstance {prefabInstance.Name} is invalid`)
+		
 		if not prefabInstance:IsA("BasePart") then
-			warn(`PrefabInstance {prefabInstance.Name} is invalid - expected BasePart, got {prefabInstance.ClassName}. Skipping.`)
+			warn(`Expected BasePart, got {prefabInstance.ClassName}. Skipping.`)
 			continue
 		end
 		
 		local prefabInstanceType = prefabInstance:GetAttribute("PrefabName")
 		if type(prefabInstanceType) ~= "string" then
-			warn(`PrefabInstance {prefabInstance.Name} is invalid - PrefabName attribute is of wrong datatype or otherwise invalid. Skipping.`)
+			warn(`PrefabName attribute is of wrong datatype or otherwise invalid. Skipping.`)
 			continue
 		end
 		
 		local instantiatingPrefab = prefabFolder:FindFirstChild(prefabInstanceType)
 		if instantiatingPrefab == nil then
-			warn(`PrefabInstance {prefabInstance.Name} is invalid - PrefabName points to non-existing prefab {prefabInstanceType}. Skipping.`)
+			warn(`PrefabName points to non-existing prefab {prefabInstanceType}. Skipping.`)
 			continue
 		end
 		
@@ -93,16 +161,18 @@ function prefabSystem.UnpackPrefab(mission: Folder, prefab: Folder, scope: strin
 end
 
 function prefabSystem.UnpackPrefabTargets(mission: Folder, targetGroup: Folder)
+	local warn = warnLogger.new("UnpackPrefabTarget", "Prefab Target Invalid")
+	
 	for _, prefabTarget in ipairs(targetGroup:GetChildren()) do
 		if prefabTarget.Name == "InstanceBase" then continue end
 		
 		if not prefabTarget:IsA("Folder") then
-			warn(`PrefabTarget {prefabTarget.Name} is invalid - expected Folder, got {prefabTarget.ClassName}. Skipping.`)
+			warn(`Expected Folder, got {prefabTarget.ClassName}`, "Target will be ignored")
 			continue
 		end
 
 		local missionPrefabTarget = mission:FindFirstChild(prefabTarget.Name) 
-		if missionPrefabTarget == nil then warn(`Prefab target {prefabTarget.Name} does not exist! Create it if needed.`) continue end
+		if missionPrefabTarget == nil then warn(`Destination {prefabTarget.Name} not present`, "Create it if needed") continue end
 		for _, prefabTargetItem in ipairs(prefabTarget:GetChildren()) do
 			prefabTargetItem:Clone().Parent = missionPrefabTarget 
 		end
@@ -110,43 +180,53 @@ function prefabSystem.UnpackPrefabTargets(mission: Folder, targetGroup: Folder)
 end
 
 function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabInstance: BasePart)
+	local warn = warnLogger.new("InstantiatePrefab", `Prefab {prefab.Name}`)
+	
 	local instanceTargetGroup = prefab:FindFirstChild("Instance") or prefab:FindFirstChild("instance")
 	if not instanceTargetGroup then
-		warn(`Prefab {prefab.Name} may not be instantiated!`)
+		warn("Prefab may not be instantiated!")
 		return
 	end
 	
 	local instanceData = instanceTargetGroup:Clone()
 	local instanceBase = instanceData:FindFirstChild("InstanceBase")
 	if not instanceBase then
-		warn(`Prefab {prefab.Name} has an Instance folder but no InstanceBase part!`)
+		warn("Instance folder found but no InstanceBase part present!")
 		return
 	end
 	
 	if not instanceBase:IsA("Part") then
-		warn(`Prefab {prefab.Name} has an InstanceBase but it is not a part!`)
+		warn("InstanceBase found but not a part!")
 		return
 	end
 	
+	local sFuncStructure = prefabSystem.CollectSpecFuncAttrs(prefab, instanceBase, SPECIAL_FUNCS)
+	prefabSystem.EvaluateSpecFuncs(prefab, prefabInstance, SPECIAL_FUNCS, sFuncStructure)
+	
 	local instanceSettings = instanceBase:GetAttributes()
 	for settingName, instanceValue in pairs(prefabInstance:GetAttributes()) do
+		local warn = warn.specialize(`Ignoring invalid attribute {settingName}`)
+		
 		if settingName == "PrefabName" then continue end
+		
+		local isSFunc = prefabSystem.StrIsSpecFunc(instanceSettings[settingName])
+		if isSFunc then instanceSettings[settingName] = instanceValue continue end
 		
 		local defaultValue = instanceSettings[settingName] 
 		if defaultValue == nil then
-			warn(`Attribute {settingName} is not valid for instances of prefab {prefab.Name}! Ignoring.`)
+			warn("Attribute not present on InstanceBase")
 			continue
 		end
 		
 		if type(defaultValue) ~= type(instanceValue) then
-			warn(`{prefabInstance.Parent.Name}.{prefabInstance.Name} : Attribute {settingName} is expected to be of type {type(defaultValue)} for instances of prefab {prefab.Name}, but got {type(instanceValue)}! Ignoring.`)
+			warn(`Expected type {type(defaultValue)} but got {type(instanceValue)}`)
 			continue
 		end
 		
 		instanceSettings[settingName] = instanceValue
 	end
 	
-	prefabSystem.DeepAttributeInterpolate(prefab, instanceData, instanceSettings)
+	prefabSystem.DeepAttributeEvaluator(prefab, instanceData, prefabSystem.InterpolateValue, instanceSettings)
 	
 	for _, prefabElement in pairs(instanceData:GetDescendants()) do
 		if prefabElement == instanceBase then continue end
@@ -158,45 +238,169 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 	prefabSystem.UnpackPrefabTargets(mission, instanceData)
 end
 
-local ATTRIBUTE_SUBSTITUTION_PATTERN = "%$%(([_%w]+)%)"
-function prefabSystem.DeepAttributeInterpolate(prefab: Folder, root: Instance, state: { [string] : any })
+function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, evaluator, evalData)
+	local warn = warnLogger.new("Attribute Evaluation", `{root.Parent}.{root}`)
+	
 	for attrName, attrValue in pairs(root:GetAttributes()) do
 		if type(attrValue) ~= "string" then continue end
-		local success, interpolatedAttrValue = prefabSystem.InterpolateValue(prefab, root, attrValue, state)
+		local success, interpolatedAttrValue = evaluator(prefab, root, attrValue, evalData)
 		if not success then continue end
+		
+		local propName = attrName:match("^this%.([_%w]+)$")
+		if propName ~= nil then
+			local success = pcall(function()
+				root[propName] = interpolatedAttrValue
+			end)
+			if not success then
+				warn(`Property {propName} not present on instance`) 
+			end
+			root:SetAttribute(attrName, nil)
+			continue
+		end
+		
 		root:SetAttribute(attrName, interpolatedAttrValue)
 	end
 	
-	local success, interpolatedName = prefabSystem.InterpolateValue(prefab, root, root.Name, state)
+	local success, interpolatedName = evaluator(prefab, root, root.Name, evalData)
 	if success and type(interpolatedName) == "string" then
 		root.Name = interpolatedName
 	elseif success then
-		warn(`Attribute Interpolation : {root.Parent.Name}.{root.Name} : Name interpolation resolved to a non-string value!`)
+		warn("Name evaluation resolved to a non-string value")
 	end
 	
 	for _, child in ipairs(root:GetChildren()) do
-		prefabSystem.DeepAttributeInterpolate(prefab, child, state)
+		prefabSystem.DeepAttributeEvaluator(prefab, child, evaluator, evalData)
 	end
 end
 
+local ATTRIBUTE_SUBSTITUTION_PATTERN = "%$%(([_%w]+)%)"
 function prefabSystem.InterpolateValue(prefab: Folder, element: Instance, value: string, state: { [string] : any }) : any
+	local warn = warnLogger.new("Attribute Interpolation", `{element.Parent}.{element}`)
+	
 	local fullReplaceName = string.match(value, `^{ATTRIBUTE_SUBSTITUTION_PATTERN}$`)
 	if fullReplaceName ~= nil then
 		local fullReplaceValue = state[fullReplaceName]
 		if fullReplaceValue == nil then
-			warn(`Attribute Interpolation : {element.Parent.Name}.{element.Name} : Full-Substitute variable \"{fullReplaceName}\" not found!`)
+			warn(`Full-Substitute variable \"{fullReplaceName}\" not found!`)
 			return false, nil
 		end
 		return true, fullReplaceValue
 	end
-	
+
 	return true, string.gsub(value, ATTRIBUTE_SUBSTITUTION_PATTERN, function(subName)
 		local subValue = state[subName]
 		if subValue == nil then
-			warn(`Attribute Interpolation : {element.Parent.Name}.{element.Name} : Partial-Substitute variable \"{subName}\" not found!`)
+			warn(`Partial-Substitute variable \"{subName}\" not found!`)
 		end
 		return tostring(subValue) or `ATTRSUB_FAIL_{subName}_NOTFOUND`
 	end)
+end
+
+function prefabSystem.CollectSpecFuncAttrs(prefab, root, sfuncs)
+	local selfTbl = { Attributes = {}, Children = {} }
+	
+	for attrName, attrVal in pairs(root:GetAttributes()) do
+		local success, sfuncData = prefabSystem.ParseSpecFunc(prefab, root, attrVal, sfuncs)
+		if not success then continue end
+		
+		selfTbl.Attributes[attrName] = sfuncData
+	end
+	
+	for _, baseElem in ipairs(root:GetChildren()) do
+		selfTbl.Children[baseElem.Name] = prefabSystem.CollectSpecFuncAttrs(prefab, baseElem, sfuncs)
+	end
+	
+	return selfTbl
+end
+
+function prefabSystem.EvaluateSpecFuncs(prefab, root, sfuncs, data)
+	local warn = warnLogger.new("EvaluateSpecFuncs")
+	
+	for childName, childData in pairs(data.Children) do
+		local childInstance = root:FindFirstChild(childName)
+		if childInstance == nil then warn(`Expected instance {root.Name}.{childName} not found`) continue end
+		prefabSystem.EvaluateSpecFuncs(prefab, childInstance, sfuncs, childData)
+	end
+
+	for attrName, sFuncData in pairs(data.Attributes) do
+		local success, result = prefabSystem.EvaluateSpecFunc(prefab, root, sFuncData)
+		if not success then continue end
+		root:SetAttribute(attrName, result)
+	end
+end
+
+local SPECFUNCS_SUBSTITUTION_PATTERN = "%${(.+)}"
+function prefabSystem.StrIsSpecFunc(str)
+	local sfuncContent = string.match(str, `^{SPECFUNCS_SUBSTITUTION_PATTERN}$`)
+	return sfuncContent ~= nil, sfuncContent
+end
+
+function prefabSystem.ParseSpecFunc(prefab, element, sfuncStr, sfuncs)
+	local warn = warnLogger.new("SFuncParsing", `{element.Parent.Name}.{element.Name}`, sfuncStr)
+	
+	local isSfunc, sfuncContent = prefabSystem.StrIsSpecFunc(sfuncStr)
+	if isSfunc == nil then return false, nil end
+
+	local sfuncArgs = {}
+	local sfuncCurrentArg = ""
+	local escaping = false
+	local inStr = false
+	for c in string.gmatch(sfuncContent, ".") do
+		if c:match("^%s$") and not inStr then continue end
+		if c == "\\" and not escaping then escaping = true continue end
+		if c == "\"" and not escaping and not inStr then inStr = true continue end
+		if c == "\"" and not escaping and inStr then inStr = false continue end
+
+		if c == "," and not escaping and not inStr then
+			table.insert(sfuncArgs, sfuncCurrentArg)
+			sfuncCurrentArg = ""
+			continue
+		end
+
+		if c == 'n' and escaping then
+			sfuncCurrentArg = sfuncCurrentArg .. "\n"
+		elseif c == 't' and escaping then
+			sfuncCurrentArg = sfuncCurrentArg .. "\t"
+		elseif escaping then
+			warn(`Received unknown escape \"\\{c}\", ignoring backslash and treating as a normal character`)
+			sfuncCurrentArg = sfuncCurrentArg .. c
+		else
+			sfuncCurrentArg = sfuncCurrentArg .. c
+		end
+
+		escaping = false
+	end
+	table.insert(sfuncArgs, sfuncCurrentArg)
+
+	local sfuncExpectedType = table.remove(sfuncArgs, 1)
+	local sfuncName = table.remove(sfuncArgs, 1)
+	local sfunc = sfuncs[sfuncName]
+	if sfunc == nil then
+		warn(`SpecialFunc \"{sfuncName}\" not found!`)
+		return false, nil
+	end
+	
+	return true, {
+		Func = sfunc,
+		Name = sfuncName,
+		Args = sfuncArgs,
+		Type = sfuncExpectedType,
+		Expr = sfuncContent
+	}
+end
+
+function prefabSystem.EvaluateSpecFunc(prefab, element, sfuncData)
+	local warn = warnLogger.new("SFuncExec", sfuncData.Expr, sfuncData.Name)
+	
+	local success, result = pcall(sfuncData.Func, prefab, element, unpack(sfuncData.Args))
+	if success and typeof(result) == sfuncData.Type then return success, result end
+	if not success then
+		warn(`Execution failed with reason \"{result}\"`)
+		return success, result
+	end
+	
+	warn(`Executed successfully but did not return expected type {sfuncData.Type}`)
+	return false, nil
 end
 
 apiConsumer.DoAPILoop(plugin, API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnAPIUnloaded)]]></ProtectedString>
@@ -212,7 +416,7 @@ apiConsumer.DoAPILoop(plugin, API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnA
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX6648A56AAA8F43DC96276BFB85D4E866">
+		<Item class="ModuleScript" referent="RBXF64FEADEF1C84448BE2D0684ABCA5AEB">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -346,6 +550,84 @@ return APIConsumer]]></ProtectedString>
 				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
 				<bool name="DefinesCapabilities">false</bool>
 				<string name="Name">APIConsumer</string>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBX41B94A1BC2EB444A867010C4406080C4">
+			<Properties>
+				<Content name="LinkedSource"><null></null></Content>
+				<ProtectedString name="Source"><![CDATA[--[[
+	Slogger, yet another minimal Lua logging module
+	Log function + post-init function are configurable, for dealing with the slog that is lua version compatibility
+	
+	Tested to be compatible with Lua5.1
+	Presumed compatible with Lua5.2-5.5/Luajit/Luau
+	
+	© Sprixitite, 2025
+]]
+
+local slogger = {}
+
+local sloggerCfg = {
+	postInit = function(tbl) return tbl end,
+	logFunc = print
+}
+
+local function varargs(...)
+	local argCount = select('#', ...)
+	local argTbl = { ... }
+	local i = 0
+	return function()
+		i = i + 1
+		if i <= argCount then return i, argTbl[i], argCount end
+	end, argTbl
+end
+
+function slogger.new(...)
+	local loggerPrefix = ""
+	local varargsIter, argsTbl = varargs(...)
+	
+	for i, arg in varargsIter do
+		loggerPrefix = loggerPrefix .. tostring(arg) .. " : "
+	end
+	
+	local doWarn = function(tbl, ...)
+		local finalMsg = ""
+		
+		for i, arg, argCount in varargs(...) do
+			finalMsg = finalMsg .. tostring(arg)
+			if i ~= argCount then
+				finalMsg = finalMsg .. " : "
+			end
+		end
+		
+		sloggerCfg.logFunc(loggerPrefix .. finalMsg)
+	end
+	
+	local specialize = function(...)
+		return slogger.new(unpack(argsTbl), ...)
+	end
+	
+	local newLogger = setmetatable({ specialize = specialize }, {__call = doWarn})
+	return sloggerCfg.postInit(newLogger)
+end
+
+function slogger.init(cfg)
+	for k, v in pairs(cfg) do
+		if type(sloggerCfg[k]) == type(v) then
+			sloggerCfg[k] = v
+		end
+	end
+	return slogger
+end
+
+return slogger]]></ProtectedString>
+				<string name="ScriptGuid">{952CD0D0-51F6-4816-983D-89B1B2D599FD}</string>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+				<bool name="DefinesCapabilities">false</bool>
+				<string name="Name">Slogger</string>
 				<int64 name="SourceAssetId">-1</int64>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>

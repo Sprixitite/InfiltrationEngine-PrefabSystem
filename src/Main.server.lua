@@ -317,6 +317,7 @@ function prefabSystem.EvaluateSpecFuncs(prefab, root, sfuncs, data)
 	end
 
 	for attrName, sFuncData in pairs(data.Attributes) do
+		if root:GetAttribute(attrName) ~= nil then continue end
 		local success, result = prefabSystem.EvaluateSpecFunc(prefab, root, sFuncData)
 		if not success then continue end
 		root:SetAttribute(attrName, result)

@@ -6,6 +6,7 @@ local warnLogger = require(script.Parent.Slogger).init{
 
 type APIReference = apiConsumer.APIReference
 
+local hookName = nil
 local API_ID = "InfiltrationEngine-PrefabSystem"
 
 local prefabSystem = {}
@@ -72,7 +73,8 @@ local SPECIAL_FUNCS = {
 }
 
 function prefabSystem.OnAPILoaded(api: APIReference, prefabSystemState)
-	prefabSystemState.ExportCallbackToken = api.AddHook("PreSerialize", API_ID, prefabSystem.OnSerializerExport)
+	hookName = api.GetRegistrantFactory("Sprix", "PrefabSystem")
+	prefabSystemState.ExportCallbackToken = api.AddHook("PreSerialize", hookName("PreSerialize"), prefabSystem.OnSerializerExport)
 end
 
 function prefabSystem.OnAPIUnloaded(api: APIReference, prefabSystemState)
@@ -242,7 +244,7 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 			if not success then
 				warn(`Property {propName} not present on instance`) 
 			end
-			whoSetCfr[root] = propName == "CFrame"
+			whoSetCfr[root] = whoSetCfr[root] or propName == "CFrame"
 			root:SetAttribute(attrName, nil)
 			continue
 		end
@@ -334,7 +336,7 @@ function prefabSystem.ParseSpecFunc(prefab, element, sfuncStr, sfuncs)
 	local warn = warnLogger.new("SFuncParsing", `{element.Parent.Name}.{element.Name}`, sfuncStr)
 	
 	local isSfunc, sfuncContent = prefabSystem.StrIsSpecFunc(sfuncStr)
-	if isSfunc == nil then return false, nil end
+	if sfuncContent == nil then return false, nil end
 
 	local sfuncArgs = {}
 	local sfuncCurrentArg = ""

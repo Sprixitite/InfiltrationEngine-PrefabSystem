@@ -1,7 +1,7 @@
 <roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
 	<External>null</External>
 	<External>nil</External>
-	<Item class="Folder" referent="RBXED07DD1581814A7FBC76785607E08BA1">
+	<Item class="Folder" referent="RBX0767152913054C378A1FE872510D9768">
 		<Properties>
 			<BinaryString name="AttributesSerialize"></BinaryString>
 			<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -10,7 +10,7 @@
 			<int64 name="SourceAssetId">-1</int64>
 			<BinaryString name="Tags"></BinaryString>
 		</Properties>
-		<Item class="Script" referent="RBX8BB0DB8B1E8B4D57AA807D2A1EF40275">
+		<Item class="Script" referent="RBX5D2967D8F3F84DDB964F402C0FB1F80B">
 			<Properties>
 				<ProtectedString name="Source"><![CDATA[local apiConsumer = require(script.Parent.APIConsumer)
 local warnLogger = require(script.Parent.Slogger).init{
@@ -20,6 +20,7 @@ local warnLogger = require(script.Parent.Slogger).init{
 
 type APIReference = apiConsumer.APIReference
 
+local hookName = nil
 local API_ID = "InfiltrationEngine-PrefabSystem"
 
 local prefabSystem = {}
@@ -86,7 +87,8 @@ local SPECIAL_FUNCS = {
 }
 
 function prefabSystem.OnAPILoaded(api: APIReference, prefabSystemState)
-	prefabSystemState.ExportCallbackToken = api.AddHook("PreSerialize", API_ID, prefabSystem.OnSerializerExport)
+	hookName = api.GetRegistrantFactory("Sprix", "PrefabSystem")
+	prefabSystemState.ExportCallbackToken = api.AddHook("PreSerialize", hookName("PreSerialize"), prefabSystem.OnSerializerExport)
 end
 
 function prefabSystem.OnAPIUnloaded(api: APIReference, prefabSystemState)
@@ -256,7 +258,7 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 			if not success then
 				warn(`Property {propName} not present on instance`) 
 			end
-			whoSetCfr[root] = propName == "CFrame"
+			whoSetCfr[root] = whoSetCfr[root] or propName == "CFrame"
 			root:SetAttribute(attrName, nil)
 			continue
 		end
@@ -348,7 +350,7 @@ function prefabSystem.ParseSpecFunc(prefab, element, sfuncStr, sfuncs)
 	local warn = warnLogger.new("SFuncParsing", `{element.Parent.Name}.{element.Name}`, sfuncStr)
 	
 	local isSfunc, sfuncContent = prefabSystem.StrIsSpecFunc(sfuncStr)
-	if isSfunc == nil then return false, nil end
+	if sfuncContent == nil then return false, nil end
 
 	local sfuncArgs = {}
 	local sfuncCurrentArg = ""
@@ -425,7 +427,7 @@ apiConsumer.DoAPILoop(plugin, API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnA
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX49FCF3076B7545F68AD91D4A68C92B7A">
+		<Item class="ModuleScript" referent="RBX15EE552C7D884E90B531638B106C27E5">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -440,28 +442,29 @@ local coreGui = game:GetService("CoreGui")
 
 export type Token = string
 export type Hook = (...any) -> nil
-export type HookType = "APIExtensionLoaded"|"APIExtensionUnloaded"|"PreSerialize"|"SerializerUnloaded"
+export type HookType = "APIExtensionLoaded"|"APIExtensionUnloaded"|"PreSerialize"|"PreSerializeMissionSetup"|"SerializerUnloaded"
 export type APIExtension = { [string] : (...any) -> ...any }
 
 export type APIReference = {
 	-- Generic
-	GetAPIVersion 		: () -> number,
-	GetCodeVersion 		: () -> number,
-	GetAttributesMap 	: () -> { [string] : { [number] : any } },
-	GetAttributeTypes 	: () -> { [string] : number },
+	GetAPIVersion 			: () -> number,
+	GetCodeVersion 			: () -> number,
+	GetAttributesMap 		: () -> { [string] : { [number] : any } },
+	GetAttributeTypes 		: () -> { [string] : number },
+	GetRegistrantFactory	: (author: string, plugin: string) -> ((hookName: string) -> string), 
 
 	-- HookTypes
-	GetHookTypes 		: () -> { [number] : string },
-	IsHookTypeValid 	: (hookType: string, warnCaller: string?) -> boolean,
+	GetHookTypes 			: () -> { [number] : string },
+	IsHookTypeValid 		: (hookType: string, warnCaller: string?) -> boolean,
 
 	-- Hooks
-	AddHook 			: (hookType: HookType, registrant: string, hook: Hook, hookState: {any}?) -> Token,
-	RemoveHook 			: (token: Token) -> nil,
+	AddHook 				: (hookType: HookType, registrant: string, hook: Hook, hookState: {any}?) -> Token,
+	RemoveHook 				: (token: Token) -> nil,
 
 	-- APIExtensions
-	AddAPIExtension 	: (name: string, author: string, contents: APIExtension) -> Token,
-	GetAPIExtension		: (name: string, author: string) -> APIExtension,
-	RemoveAPIExtension	: (token: Token) -> nil
+	AddAPIExtension 		: (name: string, author: string, contents: APIExtension) -> Token,
+	GetAPIExtension			: (name: string, author: string) -> APIExtension,
+	RemoveAPIExtension		: (token: Token) -> nil
 }
 
 type AnyTbl = { [string] : any }
@@ -503,6 +506,17 @@ APIConsumer.WaitForAPI = function(timeOut: number?) : APIReference?
 	return apiTbl
 end
 
+-- Attempt to get the API without blocking - returns false + nil if unavailable, otherwise returns true + APIReference
+APIConsumer.TryGetAPI = function() : (boolean, APIReference?)
+	local presenceIndicator = coreGui:FindFirstChild("InfilEngine_SerializerAPIAvailable")
+	if not presenceIndicator then return false, nil end
+
+	local apiTbl = shared.InfilEngine_SerializerAPI
+	if not (tostring(apiTbl) == presenceIndicator.Value) then return false, nil end
+
+	return true, apiTbl
+end
+
 -- Never returns unless there's an error
 -- Continually wires up handling of serializer load/unload as well as unloading of consumer plugin as needed
 -- Avoid doing this yourself if you can help it
@@ -539,17 +553,19 @@ APIConsumer.DoAPILoop = function<StateT>(
 	loadedClbck(api, state)
 
 	local pluginUnloadCallback
+	local unloadToken
 
 	pluginUnloadCallback = callerPlugin.Unloading:Connect(function()
 		pluginUnloadCallback:Disconnect()
 		pluginUnloadCallback = nil
 		unloadedClbck(api, state)
+		if unloadToken ~= nil then api.RemoveHook(unloadToken) end
 	end)
 
-	api.AddHook("SerializerUnloaded", `APIConsumerFramework_{srcname}`, function()
+	unloadToken = api.AddHook("SerializerUnloaded", `APIConsumerFramework_{srcname}`, function()
 		if pluginUnloadCallback then pluginUnloadCallback:Disconnect() pluginUnloadCallback = nil end
 		unloadedClbck(api, state)
-		APIConsumer.DoAPILoop(callerPlugin, srcname, loadedClbck, unloadedClbck, state)
+		task.spawn(APIConsumer.DoAPILoop, callerPlugin, srcname, loadedClbck, unloadedClbck, state)
 	end)
 end
 
@@ -563,7 +579,7 @@ return APIConsumer]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBXC60B8FC568F247F89DD735F2AAF9FF65">
+		<Item class="ModuleScript" referent="RBXD02B738D2EDB4EF99B8D4D4D89490306">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -632,7 +648,7 @@ function slogger.init(cfg)
 end
 
 return slogger]]></ProtectedString>
-				<string name="ScriptGuid">{952CD0D0-51F6-4816-983D-89B1B2D599FD}</string>
+				<string name="ScriptGuid">{9A026DAB-AF18-4CD8-98AE-F24BAF01A1ED}</string>
 				<BinaryString name="AttributesSerialize"></BinaryString>
 				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
 				<bool name="DefinesCapabilities">false</bool>

@@ -101,15 +101,6 @@ function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mis
 	local prefabFolder = mission:FindFirstChild("Prefabs")
 	if not prefabFolder then return end
 	
-	for _, prefab in ipairs(prefabFolder:GetChildren()) do
-		if not prefab:IsA("Folder") then
-			warn(`Prefab {prefab.Name} is invalid`, `Expected Folder, got {prefab.ClassName}`, "Prefab Will Be Ignored")
-			continue
-		end
-		
-		prefabSystem.UnpackPrefab(mission, prefab, "Static")
-	end
-	
 	local prefabInstanceFolder = mission:FindFirstChild("PrefabInstances")
 	if not prefabInstanceFolder then
 		-- Prevents prefabs from being exported & wasting space in the mission code
@@ -117,6 +108,7 @@ function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mis
 		return
 	end
 	
+	local staticStates = {}
 	for _, prefabInstance in ipairs(prefabInstanceFolder:GetChildren()) do
 		local warn = warn.specialize(`PrefabInstance {prefabInstance.Name} is invalid`)
 		
@@ -137,7 +129,26 @@ function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mis
 			continue
 		end
 		
-		prefabSystem.InstantiatePrefab(mission, instantiatingPrefab, prefabInstance)
+		local prefabStatic = staticStates[instantiatingPrefab] or {}
+		prefabSystem.InstantiatePrefab(mission, instantiatingPrefab, prefabInstance, prefabStatic)
+		staticStates[instantiatingPrefab] = prefabStatic
+	end
+	
+	for _, prefab in ipairs(prefabFolder:GetChildren()) do
+		if not prefab:IsA("Folder") then
+			warn(`Prefab {prefab.Name} is invalid`, `Expected Folder, got {prefab.ClassName}`, "Prefab Will Be Ignored")
+			continue
+		end
+
+		local prefabStatic = staticStates[prefab] or {}
+		prefabSystem.UnpackPrefab(mission, prefab, "Static", function(mission, prefabTargetGroup)
+			prefabSystem.DeepAttributeEvaluator(
+				prefab,
+				prefabTargetGroup,
+				prefabSystem.InterpolateValue,
+				{ Instance = prefabStatic, Static = prefabStatic }
+			)
+		end)
 	end
 	
 	-- Prevent these from being exported and taking up mission space
@@ -145,7 +156,8 @@ function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mis
 	prefabInstanceFolder:Destroy()
 end
 
-function prefabSystem.UnpackPrefab(mission: Folder, prefab: Folder, scope: string)
+function prefabSystem.UnpackPrefab(mission: Folder, prefab: Folder, scope: string, preUnpack)
+	preUnpack = glut.default(preUnpack, function() end)
 	for _, prefabTargetGroup in ipairs(prefab:GetChildren()) do
 		if not prefabTargetGroup:IsA("Folder") then
 			warn(`PrefabTargetGroup {prefabTargetGroup.Name} is invalid - expected Folder, got {prefabTargetGroup.ClassName}. Skipping.`)
@@ -153,6 +165,7 @@ function prefabSystem.UnpackPrefab(mission: Folder, prefab: Folder, scope: strin
 		end
 		
 		if not prefabTargetGroup.Name:lower():find(`^{scope:lower()}`) then continue end
+		preUnpack(mission, prefabTargetGroup)
 		prefabSystem.UnpackPrefabTargets(mission, prefabTargetGroup)
 	end
 end
@@ -176,7 +189,7 @@ function prefabSystem.UnpackPrefabTargets(mission: Folder, targetGroup: Folder)
 	end
 end
 
-function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabInstance: BasePart)
+function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabInstance: BasePart, staticState)
 	local warn = warnLogger.new("InstantiatePrefab", `Prefab {prefab.Name}`)
 	
 	local instanceTargetGroup = prefab:FindFirstChild("Instance") or prefab:FindFirstChild("instance")
@@ -226,7 +239,12 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 		instanceSettings[settingName] = instanceValue
 	end
 	
-	local cfrSet = prefabSystem.DeepAttributeEvaluator(prefab, instanceData, prefabSystem.InterpolateValue, instanceSettings)
+	local cfrSet = prefabSystem.DeepAttributeEvaluator(
+		prefab,
+		instanceData,
+		prefabSystem.InterpolateValue, 
+		{ Instance = instanceSettings, Static = staticState }
+	)
 	
 	for _, prefabElement in pairs(instanceData:GetDescendants()) do
 		if prefabElement == instanceBase then continue end
@@ -248,6 +266,12 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 		local success, interpolatedAttrValue = evaluator(prefab, root, attrName, attrValue, evalData)
 		if not success then
 			warn(interpolatedAttrValue, "Attribute will be ignored")
+			root:SetAttribute(attrName, nil)
+			continue
+		end
+		
+		local ignoreName = attrName:match("^ignore%.([_%w]+)$")
+		if ignoreName ~= nil then
 			root:SetAttribute(attrName, nil)
 			continue
 		end
@@ -285,9 +309,10 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 	return whoSetCfr
 end
 
-function prefabSystem.CreateShebangFenv(state)
+function prefabSystem.CreateShebangFenv(state, staticState)
 	local fenvBase = {
 		state = state,
+		staticState = staticState,
 		math = math,
 		string = string,
 		CFrame = CFrame,
@@ -296,6 +321,10 @@ function prefabSystem.CreateShebangFenv(state)
 		Vector3 = Vector3,
 		tostring = tostring,
 		tonumber = tonumber,
+		pairs = pairs,
+		ipairs = ipairs,
+		next = next,
+		print = print
 	}
 	
 	-- state can't overshadow builtin libraries
@@ -307,19 +336,15 @@ function prefabSystem.InterpolateValue(prefab: Folder, element: Instance, name: 
 	local exprName = `{element.Parent}.{element}:{name}`
 	local warn = warnLogger.new("Attribute Interpolation", exprName)
 	
+	local instState = state.Instance
+	local staticState = state.Static
+	
 	local shebangContents = string.match(value, "^#!/lua%s+(.*)$")
 	if shebangContents ~= nil then
 		local warn = warn.specialize("ShebangScriptExec")
 		local success, count, args = glut.str_runlua(
 			shebangContents,
-			{
-				math = math,
-				string = string,
-				CFrame = CFrame,
-				Color3 = Color3,
-				Vector2 = Vector2,
-				Vector3 = Vector3,
-			},
+			prefabSystem.CreateShebangFenv(instState, staticState),
 			exprName
 		)
 		
@@ -336,7 +361,7 @@ function prefabSystem.InterpolateValue(prefab: Folder, element: Instance, name: 
 		return success, args[1]
 	end
 	
-	local success, evalResult = luaExpr.Eval(value, state, exprRules, exprName, false)
+	local success, evalResult = luaExpr.Eval(value, instState, exprRules, exprName, false)
 	
 	if not success then
 		if type(evalResult) == "string" then
@@ -393,7 +418,7 @@ function prefabSystem.ParseSpecFunc(prefab, element, sfuncStr, sfuncs)
 	local warn = warnLogger.new("SFuncParsing", `{element.Parent.Name}.{element.Name}`, sfuncStr)
 	
 	local isSfunc, sfuncContent = prefabSystem.StrIsSpecFunc(sfuncStr)
-	if isSfunc == nil then return false, nil end
+	if not isSfunc then return false, nil end
 
 	local sfuncArgs = {}
 	local sfuncCurrentArg = ""

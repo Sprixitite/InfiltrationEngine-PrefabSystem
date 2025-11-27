@@ -1,8 +1,17 @@
-local apiConsumer = require(script.Parent.APIConsumer)
 local warnLogger = require(script.Parent.Slogger).init{
 	postInit = table.freeze,
 	logFunc = warn
 }
+
+local warn = warnLogger.new("PrefabSystem")
+
+local glut = require(script.Parent.GLUt)
+glut.configure{ warn = warn }
+
+local apiConsumer = require(script.Parent.APIConsumer)
+
+local luaExpr = require(script.Parent.LuaExpr)
+local exprRules = luaExpr.MakeEvalRules("%$%(", "%)")
 
 type APIReference = apiConsumer.APIReference
 
@@ -197,10 +206,13 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 		
 		if settingName == "PrefabName" then continue end
 		
-		local isSFunc = prefabSystem.StrIsSpecFunc(instanceSettings[settingName])
-		if isSFunc then instanceSettings[settingName] = instanceValue continue end
-		
 		local defaultValue = instanceSettings[settingName] 
+		
+		if type(defaultValue) == "string" then
+			local isSFunc = prefabSystem.StrIsSpecFunc(defaultValue)
+			if isSFunc then instanceSettings[settingName] = instanceValue continue end
+		end
+		
 		if defaultValue == nil then
 			warn("Attribute not present on InstanceBase")
 			continue
@@ -233,16 +245,20 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 	local whoSetCfr = {}
 	for attrName, attrValue in pairs(root:GetAttributes()) do
 		if type(attrValue) ~= "string" then continue end
-		local success, interpolatedAttrValue = evaluator(prefab, root, attrValue, evalData)
-		if not success then continue end
+		local success, interpolatedAttrValue = evaluator(prefab, root, attrName, attrValue, evalData)
+		if not success then
+			warn(interpolatedAttrValue, "Attribute will be ignored")
+			root:SetAttribute(attrName, nil)
+			continue
+		end
 		
 		local propName = attrName:match("^this%.([_%w]+)$")
 		if propName ~= nil then
-			local success = pcall(function()
+			local success, reason = pcall(function()
 				root[propName] = interpolatedAttrValue
 			end)
 			if not success then
-				warn(`Property {propName} not present on instance`) 
+				warn(`Failed to set Property {propName}`, reason) 
 			end
 			whoSetCfr[root] = whoSetCfr[root] or propName == "CFrame"
 			root:SetAttribute(attrName, nil)
@@ -252,7 +268,7 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 		root:SetAttribute(attrName, interpolatedAttrValue)
 	end
 	
-	local success, interpolatedName = evaluator(prefab, root, root.Name, evalData)
+	local success, interpolatedName = evaluator(prefab, root, `{root}.Name`, root.Name, evalData)
 	if success and type(interpolatedName) == "string" then
 		root.Name = interpolatedName
 	elseif success then
@@ -269,33 +285,74 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 	return whoSetCfr
 end
 
-local ATTRIBUTE_SUBSTITUTION_PATTERN = "%$%(([_%w]+)%)"
-function prefabSystem.InterpolateValue(prefab: Folder, element: Instance, value: string, state: { [string] : any }) : any
-	local warn = warnLogger.new("Attribute Interpolation", `{element.Parent}.{element}`)
+function prefabSystem.CreateShebangFenv(state)
+	local fenvBase = {
+		state = state,
+		math = math,
+		string = string,
+		CFrame = CFrame,
+		Color3 = Color3,
+		Vector2 = Vector2,
+		Vector3 = Vector3,
+		tostring = tostring,
+		tonumber = tonumber,
+	}
 	
-	local fullReplaceName = string.match(value, `^{ATTRIBUTE_SUBSTITUTION_PATTERN}$`)
-	if fullReplaceName ~= nil then
-		local fullReplaceValue = state[fullReplaceName]
-		if fullReplaceValue == nil then
-			warn(`Full-Substitute variable \"{fullReplaceName}\" not found!`)
+	-- state can't overshadow builtin libraries
+	setmetatable(fenvBase, { __index = state })
+	return fenvBase
+end
+
+function prefabSystem.InterpolateValue(prefab: Folder, element: Instance, name: string, value: string, state: { [string] : any }) : any
+	local exprName = `{element.Parent}.{element}:{name}`
+	local warn = warnLogger.new("Attribute Interpolation", exprName)
+	
+	local shebangContents = string.match(value, "^#!/lua%s+(.*)$")
+	if shebangContents ~= nil then
+		local warn = warn.specialize("ShebangScriptExec")
+		local success, count, args = glut.str_runlua(
+			shebangContents,
+			{
+				math = math,
+				string = string,
+				CFrame = CFrame,
+				Color3 = Color3,
+				Vector2 = Vector2,
+				Vector3 = Vector3,
+			},
+			exprName
+		)
+		
+		if not success then
+			return success, count
+		end
+		
+		if count > 1 then
+			warn(`Script execution succeeded, but {count-1} extra values were returned`, "Extra values will be ignored")
+		elseif count == 0 then
+			warn("Script execution succeeded, but no value was returned", "Attribute will be ignored")
 			return false, nil
 		end
-		return true, fullReplaceValue
+		return success, args[1]
+	end
+	
+	local success, evalResult = luaExpr.Eval(value, state, exprRules, exprName, false)
+	
+	if not success then
+		if type(evalResult) == "string" then
+			warn(evalResult)
+		end
+		evalResult = nil
 	end
 
-	return true, string.gsub(value, ATTRIBUTE_SUBSTITUTION_PATTERN, function(subName)
-		local subValue = state[subName]
-		if subValue == nil then
-			warn(`Partial-Substitute variable \"{subName}\" not found!`)
-		end
-		return tostring(subValue) or `ATTRSUB_FAIL_{subName}_NOTFOUND`
-	end)
+	return success, evalResult
 end
 
 function prefabSystem.CollectSpecFuncAttrs(prefab, root, sfuncs)
 	local selfTbl = { Attributes = {}, Children = {} }
 	
 	for attrName, attrVal in pairs(root:GetAttributes()) do
+		if type(attrVal) ~= "string" then continue end
 		local success, sfuncData = prefabSystem.ParseSpecFunc(prefab, root, attrVal, sfuncs)
 		if not success then continue end
 		
@@ -336,7 +393,7 @@ function prefabSystem.ParseSpecFunc(prefab, element, sfuncStr, sfuncs)
 	local warn = warnLogger.new("SFuncParsing", `{element.Parent.Name}.{element.Name}`, sfuncStr)
 	
 	local isSfunc, sfuncContent = prefabSystem.StrIsSpecFunc(sfuncStr)
-	if sfuncContent == nil then return false, nil end
+	if isSfunc == nil then return false, nil end
 
 	local sfuncArgs = {}
 	local sfuncCurrentArg = ""

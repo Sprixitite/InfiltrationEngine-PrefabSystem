@@ -1,7 +1,7 @@
 <roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
 	<External>null</External>
 	<External>nil</External>
-	<Item class="Folder" referent="RBXD21F140C237C47D6B6B14B9C12A686BA">
+	<Item class="Folder" referent="RBXD076EB898E234341B7840E347A922706">
 		<Properties>
 			<BinaryString name="AttributesSerialize"></BinaryString>
 			<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -10,7 +10,7 @@
 			<int64 name="SourceAssetId">-1</int64>
 			<BinaryString name="Tags"></BinaryString>
 		</Properties>
-		<Item class="Script" referent="RBX60BB022FEF2A4AD1875FCB2CB012A042">
+		<Item class="Script" referent="RBX4A74322F6A3E45F188C85962023F9738">
 			<Properties>
 				<ProtectedString name="Source"><![CDATA[local warnLogger = require(script.Parent.Slogger).init{
 	postInit = table.freeze,
@@ -25,6 +25,7 @@ glut.configure{ warn = warn }
 local apiConsumer = require(script.Parent.APIConsumer)
 
 local luaExpr = require(script.Parent.LuaExpr)
+local luaExprFuncs = require(script.Parent.LuaExprFuncs)
 local exprRules = luaExpr.MakeEvalRules("%$%(", "%)")
 
 type APIReference = apiConsumer.APIReference
@@ -163,6 +164,60 @@ function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mis
 				{ Instance = prefabStatic, Static = prefabStatic }
 			)
 		end)
+		
+		prefabSystem.UnpackPrefab(mission, prefab, "Programmable", function(mission, prefabTargetGroup)
+			local i = 0
+			local descendantsNotDone = 0	
+			local generatedFolder = Instance.new("Folder")
+			local evaluated = {}
+			repeat
+				descendantsNotDone = 0
+				local evaluating = prefabTargetGroup:Clone()
+				evaluated = prefabSystem.DeepAttributeEvaluator(
+					prefab,
+					evaluating,
+					prefabSystem.InterpolateValue,
+					{ Instance = prefabStatic, Static = prefabStatic },
+					{ "ignore.ProgrammableDone" }
+				)["ignore.ProgrammableDone"] or {}
+				
+				for _, descendant in ipairs(evaluating:GetDescendants()) do
+					local descendantIsFolder = descendant:IsA("Folder")
+					if descendantIsFolder then
+						if not glut.tbl_any(descendant:GetDescendants(), function(_, d) return evaluated[d] == false end) then
+							descendant:Destroy()
+							continue
+						end
+						descendant.Parent = generatedFolder
+						continue
+					end
+					
+					if evaluated[descendant] == true then descendant:Destroy() continue end
+					if evaluated[descendant] == false then
+						descendantsNotDone = descendantsNotDone + 1
+						continue
+					end
+					
+					warn(
+						`Programmable Instance {descendant} does not have mandatory ProgrammableDone property`,
+						`Instance will be destroyed`
+					)
+					descendant:Destroy()
+				end
+				
+				i = i + 1
+			until i > 2000 or descendantsNotDone <= 0
+			
+			if i > 2000 and descendantsNotDone > 0 then
+				warn("Programmable group evaluation for the following did not finish in 2000 iterations:")
+				for inst, v in pairs(evaluated) do
+					if v ~= false then continue end
+					warn(`\t{inst}`)
+				end
+			end
+			
+			return { generatedFolder }
+		end)
 	end
 	
 	-- Prevent these from being exported and taking up mission space
@@ -179,8 +234,10 @@ function prefabSystem.UnpackPrefab(mission: Folder, prefab: Folder, scope: strin
 		end
 		
 		if not prefabTargetGroup.Name:lower():find(`^{scope:lower()}`) then continue end
-		preUnpack(mission, prefabTargetGroup)
-		prefabSystem.UnpackPrefabTargets(mission, prefabTargetGroup)
+		local modifiedTargets = preUnpack(mission, prefabTargetGroup) or {prefabTargetGroup}
+		for _, modifiedTarget in ipairs(modifiedTargets) do
+			prefabSystem.UnpackPrefabTargets(mission, modifiedTarget)
+		end
 	end
 end
 
@@ -257,13 +314,14 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 		prefab,
 		instanceData,
 		prefabSystem.InterpolateValue, 
-		{ Instance = instanceSettings, Static = staticState }
-	)
+		{ Instance = instanceSettings, Static = staticState },
+		{ "this.CFrame" }
+	)["this.CFrame"] or {}
 	
 	for _, prefabElement in pairs(instanceData:GetDescendants()) do
 		if prefabElement == instanceBase then continue end
 		if not prefabElement:IsA("BasePart") then continue end
-		if cfrSet[prefabElement] then continue end
+		if cfrSet[prefabElement] ~= nil then continue end
 		local baseToElement = instanceBase.CFrame:ToObjectSpace(prefabElement.CFrame)
 		prefabElement.CFrame = prefabInstance.CFrame:ToWorldSpace(baseToElement)
 	end
@@ -271,17 +329,59 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 	prefabSystem.UnpackPrefabTargets(mission, instanceData)
 end
 
-function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, evaluator, evalData)
+function prefabSystem.GetSortedAttributeList(instance)
+	local instanceAttrs = instance:GetAttributes()
+	local instanceAttrNames = {}
+	for k, _ in pairs(instanceAttrs) do table.insert(instanceAttrNames, k) end
+	
+	table.sort(instanceAttrNames, function(a, b)
+		local aIsHighP = string.match(a, "^highp%.") ~= nil
+		local bIsHighP = string.match(b, "^highp%.") ~= nil
+		local aIsLowP = string.match(a, "^lowp%.") ~= nil
+		local bIsLowP = string.match(b, "^lowp%.") ~= nil
+		
+		if aIsHighP and not bIsHighP then
+			return true
+		elseif bIsHighP and not aIsHighP then
+			return false
+		elseif aIsLowP and not bIsLowP then
+			return false
+		elseif bIsLowP and not aIsLowP then
+			return true
+		else
+			return a < b
+		end
+	end)
+	
+	return instanceAttrNames
+end
+
+function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, evaluator, evalData, attrCapture)
+	attrCapture = glut.default(attrCapture, {})
 	local warn = warnLogger.new("Attribute Evaluation", `{root.Parent}.{root}`)
 	
-	local whoSetCfr = {}
-	for attrName, attrValue in pairs(root:GetAttributes()) do
+	local setQuery = {}
+	for _, attrName in ipairs(prefabSystem.GetSortedAttributeList(root)) do
+		local attrValue = root:GetAttribute(attrName)
 		if type(attrValue) ~= "string" then continue end
 		local success, interpolatedAttrValue = evaluator(prefab, root, attrName, attrValue, evalData)
 		if not success then
 			warn(interpolatedAttrValue, "Attribute will be ignored")
 			root:SetAttribute(attrName, nil)
 			continue
+		end
+		
+		local pName = attrName:match("^highp%.(.+)$") or attrName:match("^lowp%.(.+)$")
+		if pName ~= nil then
+			root:SetAttribute(attrName, nil)
+			attrName = pName
+		end
+		
+		for _, querying in ipairs(attrCapture) do
+			if attrName == querying then
+				setQuery[querying] = setQuery[querying] or {}
+				setQuery[querying][root] = interpolatedAttrValue
+			end
 		end
 		
 		local ignoreName = attrName:match("^ignore%.([_%w]+)$")
@@ -298,7 +398,6 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 			if not success then
 				warn(`Failed to set Property {propName}`, reason) 
 			end
-			whoSetCfr[root] = whoSetCfr[root] or propName == "CFrame"
 			root:SetAttribute(attrName, nil)
 			continue
 		end
@@ -314,20 +413,31 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 	end
 	
 	for _, child in ipairs(root:GetChildren()) do
-		local childSet = prefabSystem.DeepAttributeEvaluator(prefab, child, evaluator, evalData)
-		for inst, set in pairs(childSet) do
-			whoSetCfr[inst] = set
+		local childSet = prefabSystem.DeepAttributeEvaluator(prefab, child, evaluator, evalData, attrCapture)
+		for attrName, hit in pairs(childSet) do
+			setQuery[attrName] = setQuery[attrName] or {}
+			local subTbl = setQuery[attrName]
+			for inst, val in pairs(hit) do
+				subTbl[inst] = val
+			end
 		end
 	end
 	
-	return whoSetCfr
+	return setQuery
 end
 
 function prefabSystem.CreateShebangFenv(state, staticState)
+	local tableLib = {}
+	for k, v in pairs(table) do tableLib[k] = v end
+	
+	tableLib.getkeys = function(t) local keys = {} for k, _ in pairs(t) do table.insert(keys, k) end return keys end
+	
 	local fenvBase = {
 		state = state,
+		static = staticState,
 		staticState = staticState,
 		math = math,
+		table = tableLib,
 		string = string,
 		CFrame = CFrame,
 		Color3 = Color3,
@@ -375,7 +485,13 @@ function prefabSystem.InterpolateValue(prefab: Folder, element: Instance, name: 
 		return success, args[1]
 	end
 	
-	local success, evalResult = luaExpr.Eval(value, instState, exprRules, exprName, false)
+	local success, evalResult = luaExpr.Eval(
+		value,
+		luaExprFuncs.CreateExprFenv(instState, staticState),
+		exprRules,
+		exprName,
+		false
+	)
 	
 	if not success then
 		if type(evalResult) == "string" then
@@ -509,7 +625,7 @@ apiConsumer.DoAPILoop(plugin, API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnA
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBXADA13D450364427D854CDF875F51620C">
+		<Item class="ModuleScript" referent="RBX8C26B8470E49496FA866ABC05A42A406">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -661,7 +777,7 @@ return APIConsumer]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX108B9E44DDDE466FB5D5578EB3B9C351">
+		<Item class="ModuleScript" referent="RBX61A6A7574AAE436FB4D24DC5F0BF429B">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -739,14 +855,14 @@ return slogger]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBXB54D6E3C7EC2447DB47911D899A8D4F6">
+		<Item class="ModuleScript" referent="RBXADE40AF5B6C144829B6BF26F9C520CEB">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
-				<ProtectedString name="Source"><![CDATA[local glut = require(script.Parent.GLUt)
+				<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
 
 local LuaExpr = {}
 
-local LUA_EXPR_BODY_STRMATCH = "([\'\"%-%+%*%^%.,:/_%w%s]+)"
+local LUA_EXPR_BODY_STRMATCH = "([\'\"%-%+%*%^%.,:/_%w%s{}]+)"
 
 function LuaExpr.MakeEvalRules(prefix, delim)
 	local bodyMatch = prefix .. LUA_EXPR_BODY_STRMATCH .. delim 
@@ -809,7 +925,7 @@ return LuaExpr]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBXB2503E1B2E2C4856B599D1F9AD98C84D">
+		<Item class="ModuleScript" referent="RBXC844685AF1E746B28821898FD07F9161">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -858,7 +974,7 @@ end
 
 function GLUt.type_warn(argName, funcName, expected, got)
 	if argName == nil or expected == got then return end
-	
+
 	local warnStart = GLUt.type_is(funcName, "string") and (funcName .. ": expected arg \"") or "Expected arg \""
 	GLUtCfg.warn(warnStart .. argName .. "\" of type \"" .. expected .. "\" got type \"" .. got .. "\"!")
 	GLUtCfg.warn("Traceback: " .. debug.traceback())
@@ -866,14 +982,14 @@ end
 
 function GLUt.type_check(arg, expected, argName, funcName)
 	local argType = GLUtCfg.type(arg)
-	
+
 	expected = string.gsub(expected, '?', "|nil")
 	for _, validType in pairs(GLUt.str_split(expected, '|')) do
 		if validType == argType then return true end
 	end
-	
+
 	GLUt.type_warn(argName, funcName, expected, argType)
-	
+
 	return false
 end
 
@@ -902,12 +1018,16 @@ end
 function GLUt.str_split(str, separator)
 	str = str .. separator
 	separator = GLUt.str_escape_pattern(separator)
-	
+
 	local substrs = {}
 	for substr in string.gmatch(str, "(.-)" .. separator) do
 		substrs[#substrs+1] = substr
 	end
 	return substrs
+end
+
+function GLUt.str_has_match(str, pattern)
+	return string.match(str, pattern) ~= nil
 end
 
 function GLUt.str_escape_pattern(str)
@@ -947,15 +1067,27 @@ function GLUt.str_runlua(source, fenv, chunkName)
 		unidentified = unidentified + 1
 		return "loadstring#" .. tostring(unidentified) 
 	end)
-	
+
 	local strFun, failReason = loadstring(source, chunkName)
 	if GLUtCfg.type(strFun) ~= "function" then
 		return false, "Loadstring : " .. chunkName .. " : Evaluation failed : " .. failReason
 	end
+
 	strFun = setfenv(strFun, fenv)
-	
+
 	return pcall(function()
 		return GLUt.vararg_capture(strFun())
+	end)
+end
+
+function GLUt.str_runlua_unsafe(source, chunkName)
+	local strFun, failReason = loadstring(source, chunkName)
+	if GLUtCfg.type(strFun) ~= "function" then
+		return false, "Loadstring : " .. chunkName .. " : Evaluation failed : " .. failReason
+	end
+
+	return pcall(function()
+		return GLUt.vararg_capture()
 	end)
 end
 
@@ -975,9 +1107,33 @@ function GLUt.tbl_tryindex(tbl, ...)
 	return true, indexing
 end
 
+function GLUt.tbl_deepget(tbl, create_missing, ...)
+	local indexing = tbl
+	for _, k in GLUt.vararg_iter(...) do
+		k = tostring(k)
+		if GLUtCfg.type(indexing) ~= "table" then
+			return false, indexing
+		end
+		
+		if indexing[k] == nil and create_missing then
+			indexing[k] = {}
+		end
+		
+		indexing = indexing[k]
+	end
+	
+	return true, indexing
+end
+
+function GLUt.tbl_getkeys(tbl)
+	local keys = {}
+	for k, _ in pairs(tbl) do keys[#keys+1] = k end
+	return keys
+end
+
 function GLUt.tbl_clone(tbl, shallow)
 	shallow = GLUt.default(shallow, false)
-	
+
 	local cloned = {}
 	for k, v in pairs(tbl) do
 		if GLUtCfg.type(v) == "table" and not shallow then
@@ -1018,12 +1174,149 @@ function GLUt.tbl_tostring(tbl, levels, tblName)
 	return tbl_tostring(tblName, tbl, levels, 1)
 end
 
+function GLUt.tbl_any(tbl, f)
+	local anySucceed = nil
+	for k, v in pairs(tbl) do
+		anySucceed = GLUt.default(anySucceed, false) or f(k, v)
+		if anySucceed then break end
+	end
+	return anySucceed
+end
+
+function GLUt.tbl_all(tbl, f)
+	local allSucceed = nil
+	for k, v in pairs(tbl) do
+		allSucceed = GLUt.default(allSucceed, true) and f(k, v)
+		if not allSucceed then break end
+	end
+	return allSucceed
+end
+
 return GLUt]]></ProtectedString>
 				<string name="ScriptGuid">{7484DC6C-C136-46C9-992B-BD6809BF968D}</string>
 				<BinaryString name="AttributesSerialize"></BinaryString>
 				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
 				<bool name="DefinesCapabilities">false</bool>
 				<string name="Name">GLUt</string>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBXDE88954A1A0A4CA18DCDA0D1C176886D">
+			<Properties>
+				<Content name="LinkedSource"><null></null></Content>
+				<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
+
+local luaExprFuncs = {}
+
+local function StaticGroupErr(groupName)
+	error("Attempt to set StaticStateGroup " .. groupName .. " but encountered non-table element!")
+end
+
+luaExprFuncs.staticGroupExport = function(state, staticState, t)
+	-- Exports a variable as a member of a staticState group, creating the group if it does not exist
+	local groupName = t[1]
+	local value = t[2]
+	local groupPath = glut.str_split(groupName, '.')
+	local success, groupTbl = glut.tbl_deepget(staticState, true, unpack(groupPath))
+	if not success then StaticGroupErr(groupName) end
+	table.insert(groupTbl, value)
+	return value
+end
+
+luaExprFuncs.staticGroupCombine = function(state, staticState, t)
+	-- Concatenates the string representation of all members of a staticState group, using the specified operator inbetween all elements
+	local groupName = t[1]
+	local combineOp = t[2]
+	local prefixOp = t[3]
+	local suffixOp = t[4]
+	local field = t[5]
+	local groupPath = glut.str_split(groupName, '.')
+	local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
+	if not success then StaticGroupErr(groupName) end
+	local str = (prefixOp or "") .. "("
+	for i, v in ipairs(groupTbl) do
+		if i ~= 1 then str = str .. combineOp end
+		local vStr = (field == nil) and tostring(v) or tostring(v[field])
+		str = str .. vStr
+	end
+	str = str .. ")" .. (suffixOp or "")
+	return str
+end
+
+luaExprFuncs.staticGroupEmpty = function(state, staticState, t)
+	-- Returns true if the StaticStateGroup at the given path is empty
+	return luaExprFuncs.staticGroupSize({t[1]}) == 0
+end
+
+luaExprFuncs.staticGroupSize = function(state, staticState, t)
+	-- Returns the size of the StaticStateGroup at the given path - optionally as a string
+	local groupName = t[1]
+	local toStr = t[2] or false
+	local groupPath = glut.str_split(groupName, '.')
+	local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
+	if not success then StaticGroupErr(groupName) end
+	return toStr and tostring(#groupTbl) or #groupTbl
+end
+
+luaExprFuncs.moveFirstStaticElement = function(state, staticState, t)
+	-- Removes the first element of the StaticStateGroup at the given path, and places it
+	local groupName = t[1]
+	local destName = t[2]
+	local wantPart = t[3] or 'v' -- Do you want the key or the value?
+	if wantPart ~= 'k' and wantPart ~= 'v' then error("WantPart must be nil|\"k\"|\"v\"!") end
+	local groupPath = glut.str_split(groupName)
+	local destPath = glut.str_split(destName)
+	local destKey = table.remove(destPath, #destPath)
+	local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
+	if not success then StaticGroupErr(groupName) end
+	local success, destTbl = glut.tbl_deepget(staticState, true, unpack(destPath))
+	if not success then StaticGroupErr(destName) end
+	local groupKeys = glut.tbl_getkeys(groupTbl)
+	local firstKey = groupKeys[1]
+	local moving = nil
+	if type(firstKey) == "number" then moving = table.remove(groupTbl, firstKey)
+	else moving = groupTbl[firstKey] groupTbl[firstKey] = nil end
+	if wantPart == 'k' then moving = firstKey end
+	destTbl[destKey] = moving
+	return true
+end
+
+luaExprFuncs.fallbackIfUnset = function(state, staticState, t)
+	-- Returns the second argument if the first contains the substring "UNSET" (case-sensitive)
+	local maybeUnset = t[1]
+	local fallback = t[2]
+	if maybeUnset == nil then return fallback end
+	if type(maybeUnset) ~= "string" then return maybeUnset end
+	if glut.str_has_match("UNSET") then return fallback end
+	if glut.str_has_match("DEFAULT") then return fallback end
+	return maybeUnset
+end
+
+-- Convenience if you forget the name
+luaExprFuncs.fallbackIfDefault = function(state, staticState, t) return luaExprFuncs.fallbackIfUnset(t) end
+
+luaExprFuncs.CreateExprFenv = function(instState, staticState)
+	return setmetatable(
+		{},
+		{
+			__index = function(t, k)
+				if instState[k] ~= nil then return instState[k] end
+				if luaExprFuncs[k] == nil then return nil end
+				return function(t)
+					return luaExprFuncs[k](instState, staticState, t)
+				end
+			end,
+		}
+	)
+end
+
+return luaExprFuncs]]></ProtectedString>
+				<string name="ScriptGuid">{E2794CDD-4304-468F-9705-C61F2BB5BBDA}</string>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+				<bool name="DefinesCapabilities">false</bool>
+				<string name="Name">LuaExprFuncs</string>
 				<int64 name="SourceAssetId">-1</int64>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>

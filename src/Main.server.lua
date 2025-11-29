@@ -11,6 +11,7 @@ glut.configure{ warn = warn }
 local apiConsumer = require(script.Parent.APIConsumer)
 
 local luaExpr = require(script.Parent.LuaExpr)
+local luaExprFuncs = require(script.Parent.LuaExprFuncs)
 local exprRules = luaExpr.MakeEvalRules("%$%(", "%)")
 
 type APIReference = apiConsumer.APIReference
@@ -149,6 +150,60 @@ function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mis
 				{ Instance = prefabStatic, Static = prefabStatic }
 			)
 		end)
+		
+		prefabSystem.UnpackPrefab(mission, prefab, "Programmable", function(mission, prefabTargetGroup)
+			local i = 0
+			local descendantsNotDone = 0	
+			local generatedFolder = Instance.new("Folder")
+			local evaluated = {}
+			repeat
+				descendantsNotDone = 0
+				local evaluating = prefabTargetGroup:Clone()
+				evaluated = prefabSystem.DeepAttributeEvaluator(
+					prefab,
+					evaluating,
+					prefabSystem.InterpolateValue,
+					{ Instance = prefabStatic, Static = prefabStatic },
+					{ "ignore.ProgrammableDone" }
+				)["ignore.ProgrammableDone"] or {}
+				
+				for _, descendant in ipairs(evaluating:GetDescendants()) do
+					local descendantIsFolder = descendant:IsA("Folder")
+					if descendantIsFolder then
+						if not glut.tbl_any(descendant:GetDescendants(), function(_, d) return evaluated[d] == false end) then
+							descendant:Destroy()
+							continue
+						end
+						descendant.Parent = generatedFolder
+						continue
+					end
+					
+					if evaluated[descendant] == true then descendant:Destroy() continue end
+					if evaluated[descendant] == false then
+						descendantsNotDone = descendantsNotDone + 1
+						continue
+					end
+					
+					warn(
+						`Programmable Instance {descendant} does not have mandatory ProgrammableDone property`,
+						`Instance will be destroyed`
+					)
+					descendant:Destroy()
+				end
+				
+				i = i + 1
+			until i > 2000 or descendantsNotDone <= 0
+			
+			if i > 2000 and descendantsNotDone > 0 then
+				warn("Programmable group evaluation for the following did not finish in 2000 iterations:")
+				for inst, v in pairs(evaluated) do
+					if v ~= false then continue end
+					warn(`\t{inst}`)
+				end
+			end
+			
+			return { generatedFolder }
+		end)
 	end
 	
 	-- Prevent these from being exported and taking up mission space
@@ -165,8 +220,10 @@ function prefabSystem.UnpackPrefab(mission: Folder, prefab: Folder, scope: strin
 		end
 		
 		if not prefabTargetGroup.Name:lower():find(`^{scope:lower()}`) then continue end
-		preUnpack(mission, prefabTargetGroup)
-		prefabSystem.UnpackPrefabTargets(mission, prefabTargetGroup)
+		local modifiedTargets = preUnpack(mission, prefabTargetGroup) or {prefabTargetGroup}
+		for _, modifiedTarget in ipairs(modifiedTargets) do
+			prefabSystem.UnpackPrefabTargets(mission, modifiedTarget)
+		end
 	end
 end
 
@@ -243,13 +300,14 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 		prefab,
 		instanceData,
 		prefabSystem.InterpolateValue, 
-		{ Instance = instanceSettings, Static = staticState }
-	)
+		{ Instance = instanceSettings, Static = staticState },
+		{ "this.CFrame" }
+	)["this.CFrame"] or {}
 	
 	for _, prefabElement in pairs(instanceData:GetDescendants()) do
 		if prefabElement == instanceBase then continue end
 		if not prefabElement:IsA("BasePart") then continue end
-		if cfrSet[prefabElement] then continue end
+		if cfrSet[prefabElement] ~= nil then continue end
 		local baseToElement = instanceBase.CFrame:ToObjectSpace(prefabElement.CFrame)
 		prefabElement.CFrame = prefabInstance.CFrame:ToWorldSpace(baseToElement)
 	end
@@ -257,17 +315,59 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 	prefabSystem.UnpackPrefabTargets(mission, instanceData)
 end
 
-function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, evaluator, evalData)
+function prefabSystem.GetSortedAttributeList(instance)
+	local instanceAttrs = instance:GetAttributes()
+	local instanceAttrNames = {}
+	for k, _ in pairs(instanceAttrs) do table.insert(instanceAttrNames, k) end
+	
+	table.sort(instanceAttrNames, function(a, b)
+		local aIsHighP = string.match(a, "^highp%.") ~= nil
+		local bIsHighP = string.match(b, "^highp%.") ~= nil
+		local aIsLowP = string.match(a, "^lowp%.") ~= nil
+		local bIsLowP = string.match(b, "^lowp%.") ~= nil
+		
+		if aIsHighP and not bIsHighP then
+			return true
+		elseif bIsHighP and not aIsHighP then
+			return false
+		elseif aIsLowP and not bIsLowP then
+			return false
+		elseif bIsLowP and not aIsLowP then
+			return true
+		else
+			return a < b
+		end
+	end)
+	
+	return instanceAttrNames
+end
+
+function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, evaluator, evalData, attrCapture)
+	attrCapture = glut.default(attrCapture, {})
 	local warn = warnLogger.new("Attribute Evaluation", `{root.Parent}.{root}`)
 	
-	local whoSetCfr = {}
-	for attrName, attrValue in pairs(root:GetAttributes()) do
+	local setQuery = {}
+	for _, attrName in ipairs(prefabSystem.GetSortedAttributeList(root)) do
+		local attrValue = root:GetAttribute(attrName)
 		if type(attrValue) ~= "string" then continue end
 		local success, interpolatedAttrValue = evaluator(prefab, root, attrName, attrValue, evalData)
 		if not success then
 			warn(interpolatedAttrValue, "Attribute will be ignored")
 			root:SetAttribute(attrName, nil)
 			continue
+		end
+		
+		local pName = attrName:match("^highp%.(.+)$") or attrName:match("^lowp%.(.+)$")
+		if pName ~= nil then
+			root:SetAttribute(attrName, nil)
+			attrName = pName
+		end
+		
+		for _, querying in ipairs(attrCapture) do
+			if attrName == querying then
+				setQuery[querying] = setQuery[querying] or {}
+				setQuery[querying][root] = interpolatedAttrValue
+			end
 		end
 		
 		local ignoreName = attrName:match("^ignore%.([_%w]+)$")
@@ -284,7 +384,6 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 			if not success then
 				warn(`Failed to set Property {propName}`, reason) 
 			end
-			whoSetCfr[root] = whoSetCfr[root] or propName == "CFrame"
 			root:SetAttribute(attrName, nil)
 			continue
 		end
@@ -300,20 +399,31 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 	end
 	
 	for _, child in ipairs(root:GetChildren()) do
-		local childSet = prefabSystem.DeepAttributeEvaluator(prefab, child, evaluator, evalData)
-		for inst, set in pairs(childSet) do
-			whoSetCfr[inst] = set
+		local childSet = prefabSystem.DeepAttributeEvaluator(prefab, child, evaluator, evalData, attrCapture)
+		for attrName, hit in pairs(childSet) do
+			setQuery[attrName] = setQuery[attrName] or {}
+			local subTbl = setQuery[attrName]
+			for inst, val in pairs(hit) do
+				subTbl[inst] = val
+			end
 		end
 	end
 	
-	return whoSetCfr
+	return setQuery
 end
 
 function prefabSystem.CreateShebangFenv(state, staticState)
+	local tableLib = {}
+	for k, v in pairs(table) do tableLib[k] = v end
+	
+	tableLib.getkeys = function(t) local keys = {} for k, _ in pairs(t) do table.insert(keys, k) end return keys end
+	
 	local fenvBase = {
 		state = state,
+		static = staticState,
 		staticState = staticState,
 		math = math,
+		table = tableLib,
 		string = string,
 		CFrame = CFrame,
 		Color3 = Color3,
@@ -361,7 +471,13 @@ function prefabSystem.InterpolateValue(prefab: Folder, element: Instance, name: 
 		return success, args[1]
 	end
 	
-	local success, evalResult = luaExpr.Eval(value, instState, exprRules, exprName, false)
+	local success, evalResult = luaExpr.Eval(
+		value,
+		luaExprFuncs.CreateExprFenv(instState, staticState),
+		exprRules,
+		exprName,
+		false
+	)
 	
 	if not success then
 		if type(evalResult) == "string" then

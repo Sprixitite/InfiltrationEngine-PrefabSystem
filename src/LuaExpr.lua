@@ -1,8 +1,8 @@
-local glut = require(script.Parent.GLUt)
+local glut = require("./GLUt")
 
 local LuaExpr = {}
 
-local LUA_EXPR_BODY_STRMATCH = "([\'\"%-%+%*%^%.,:/_%w%s]+)"
+local LUA_EXPR_BODY_STRMATCH = "([\'\"%-%+%*%^%.,:/_%w%s{}]+)"
 
 function LuaExpr.MakeEvalRules(prefix, delim)
 	local bodyMatch = prefix .. LUA_EXPR_BODY_STRMATCH .. delim 

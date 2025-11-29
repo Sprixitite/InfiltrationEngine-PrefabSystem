@@ -44,7 +44,7 @@ end
 
 function GLUt.type_warn(argName, funcName, expected, got)
 	if argName == nil or expected == got then return end
-	
+
 	local warnStart = GLUt.type_is(funcName, "string") and (funcName .. ": expected arg \"") or "Expected arg \""
 	GLUtCfg.warn(warnStart .. argName .. "\" of type \"" .. expected .. "\" got type \"" .. got .. "\"!")
 	GLUtCfg.warn("Traceback: " .. debug.traceback())
@@ -52,14 +52,14 @@ end
 
 function GLUt.type_check(arg, expected, argName, funcName)
 	local argType = GLUtCfg.type(arg)
-	
+
 	expected = string.gsub(expected, '?', "|nil")
 	for _, validType in pairs(GLUt.str_split(expected, '|')) do
 		if validType == argType then return true end
 	end
-	
+
 	GLUt.type_warn(argName, funcName, expected, argType)
-	
+
 	return false
 end
 
@@ -88,12 +88,16 @@ end
 function GLUt.str_split(str, separator)
 	str = str .. separator
 	separator = GLUt.str_escape_pattern(separator)
-	
+
 	local substrs = {}
 	for substr in string.gmatch(str, "(.-)" .. separator) do
 		substrs[#substrs+1] = substr
 	end
 	return substrs
+end
+
+function GLUt.str_has_match(str, pattern)
+	return string.match(str, pattern) ~= nil
 end
 
 function GLUt.str_escape_pattern(str)
@@ -133,15 +137,27 @@ function GLUt.str_runlua(source, fenv, chunkName)
 		unidentified = unidentified + 1
 		return "loadstring#" .. tostring(unidentified) 
 	end)
-	
+
 	local strFun, failReason = loadstring(source, chunkName)
 	if GLUtCfg.type(strFun) ~= "function" then
 		return false, "Loadstring : " .. chunkName .. " : Evaluation failed : " .. failReason
 	end
+
 	strFun = setfenv(strFun, fenv)
-	
+
 	return pcall(function()
 		return GLUt.vararg_capture(strFun())
+	end)
+end
+
+function GLUt.str_runlua_unsafe(source, chunkName)
+	local strFun, failReason = loadstring(source, chunkName)
+	if GLUtCfg.type(strFun) ~= "function" then
+		return false, "Loadstring : " .. chunkName .. " : Evaluation failed : " .. failReason
+	end
+
+	return pcall(function()
+		return GLUt.vararg_capture()
 	end)
 end
 
@@ -161,9 +177,33 @@ function GLUt.tbl_tryindex(tbl, ...)
 	return true, indexing
 end
 
+function GLUt.tbl_deepget(tbl, create_missing, ...)
+	local indexing = tbl
+	for _, k in GLUt.vararg_iter(...) do
+		k = tostring(k)
+		if GLUtCfg.type(indexing) ~= "table" then
+			return false, indexing
+		end
+		
+		if indexing[k] == nil and create_missing then
+			indexing[k] = {}
+		end
+		
+		indexing = indexing[k]
+	end
+	
+	return true, indexing
+end
+
+function GLUt.tbl_getkeys(tbl)
+	local keys = {}
+	for k, _ in pairs(tbl) do keys[#keys+1] = k end
+	return keys
+end
+
 function GLUt.tbl_clone(tbl, shallow)
 	shallow = GLUt.default(shallow, false)
-	
+
 	local cloned = {}
 	for k, v in pairs(tbl) do
 		if GLUtCfg.type(v) == "table" and not shallow then
@@ -202,6 +242,24 @@ end
 function GLUt.tbl_tostring(tbl, levels, tblName)
 	GLUt.default(tblName, tostring(tbl))
 	return tbl_tostring(tblName, tbl, levels, 1)
+end
+
+function GLUt.tbl_any(tbl, f)
+	local anySucceed = nil
+	for k, v in pairs(tbl) do
+		anySucceed = GLUt.default(anySucceed, false) or f(k, v)
+		if anySucceed then break end
+	end
+	return anySucceed
+end
+
+function GLUt.tbl_all(tbl, f)
+	local allSucceed = nil
+	for k, v in pairs(tbl) do
+		allSucceed = GLUt.default(allSucceed, true) and f(k, v)
+		if not allSucceed then break end
+	end
+	return allSucceed
 end
 
 return GLUt

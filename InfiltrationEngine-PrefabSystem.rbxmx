@@ -1,7 +1,7 @@
 <roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
 	<External>null</External>
 	<External>nil</External>
-	<Item class="Folder" referent="RBXD076EB898E234341B7840E347A922706">
+	<Item class="Folder" referent="RBX0CCD54AAAA434C7F9B8B9BDBD9AAEDC9">
 		<Properties>
 			<BinaryString name="AttributesSerialize"></BinaryString>
 			<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -10,7 +10,7 @@
 			<int64 name="SourceAssetId">-1</int64>
 			<BinaryString name="Tags"></BinaryString>
 		</Properties>
-		<Item class="Script" referent="RBX4A74322F6A3E45F188C85962023F9738">
+		<Item class="Script" referent="RBXC60578EE3A724AF7ADE69D398056B742">
 			<Properties>
 				<ProtectedString name="Source"><![CDATA[local warnLogger = require(script.Parent.Slogger).init{
 	postInit = table.freeze,
@@ -124,8 +124,11 @@ function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mis
 	end
 	
 	local staticStates = {}
-	for _, prefabInstance in ipairs(prefabInstanceFolder:GetChildren()) do
+	for _, prefabInstance in ipairs(prefabInstanceFolder:GetDescendants()) do
 		local warn = warn.specialize(`PrefabInstance {prefabInstance.Name} is invalid`)
+		
+		if prefabInstance:IsA("Folder") then continue end
+		if prefabInstance.Parent:IsA("BasePart") then continue end
 		
 		if not prefabInstance:IsA("BasePart") then
 			warn(`Expected BasePart, got {prefabInstance.ClassName}. Skipping.`)
@@ -255,6 +258,14 @@ function prefabSystem.UnpackPrefabTargets(mission: Folder, targetGroup: Folder)
 		local missionPrefabTarget = mission:FindFirstChild(prefabTarget.Name) 
 		if missionPrefabTarget == nil then warn(`Destination {prefabTarget.Name} not present`, "Create it if needed") continue end
 		for _, prefabTargetItem in ipairs(prefabTarget:GetChildren()) do
+			local itemIsFolder = prefabTargetItem:IsA("Folder")
+			local missionFolder = missionPrefabTarget:FindFirstChild(prefabTargetItem.Name)
+			if itemIsFolder and missionFolder ~= nil then
+				for _, child in ipairs(prefabTargetItem:GetChildren()) do
+					child:Clone().Parent = missionFolder
+				end
+				continue
+			end
 			prefabTargetItem:Clone().Parent = missionPrefabTarget 
 		end
 	end
@@ -340,6 +351,19 @@ function prefabSystem.GetSortedAttributeList(instance)
 		local aIsLowP = string.match(a, "^lowp%.") ~= nil
 		local bIsLowP = string.match(b, "^lowp%.") ~= nil
 		
+		local aNumericP = string.match(a, "^(%d+)%.")
+		local bNumericP = string.match(b, "^(%d+)%.")
+		local aIsNumericP = aNumericP ~= nil
+		local bIsNumericP = bNumericP ~= nil
+		
+		if aIsNumericP and bIsNumericP then
+			return tonumber(aNumericP) < tonumber(bNumericP)
+		elseif aIsNumericP then
+			return true
+		elseif bIsNumericP then
+			return false
+		end
+		
 		if aIsHighP and not bIsHighP then
 			return true
 		elseif bIsHighP and not aIsHighP then
@@ -371,7 +395,7 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 			continue
 		end
 		
-		local pName = attrName:match("^highp%.(.+)$") or attrName:match("^lowp%.(.+)$")
+		local pName = attrName:match("^highp%.(.+)$") or attrName:match("^lowp%.(.+)$") or attrName:match("^%d+%.(.+)$")
 		if pName ~= nil then
 			root:SetAttribute(attrName, nil)
 			attrName = pName
@@ -393,6 +417,9 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 		local propName = attrName:match("^this%.([_%w]+)$")
 		if propName ~= nil then
 			local success, reason = pcall(function()
+				if typeof(root[propName]) == "EnumItem" then
+					interpolatedAttrValue = root[propName].EnumType:FromName(interpolatedAttrValue)
+				end
 				root[propName] = interpolatedAttrValue
 			end)
 			if not success then
@@ -625,7 +652,7 @@ apiConsumer.DoAPILoop(plugin, API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnA
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX8C26B8470E49496FA866ABC05A42A406">
+		<Item class="ModuleScript" referent="RBX1889F8FE2BD24A60ACC530E67837426D">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -777,7 +804,7 @@ return APIConsumer]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX61A6A7574AAE436FB4D24DC5F0BF429B">
+		<Item class="ModuleScript" referent="RBX6712784F5B074171A32445EFF3DA5D62">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -855,7 +882,7 @@ return slogger]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBXADE40AF5B6C144829B6BF26F9C520CEB">
+		<Item class="ModuleScript" referent="RBX802B4BD5C4E0423CA2F17814A1AA566F">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
@@ -925,7 +952,7 @@ return LuaExpr]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBXC844685AF1E746B28821898FD07F9161">
+		<Item class="ModuleScript" referent="RBX34508FEF89C84D5F8313198F4106130C">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -1202,7 +1229,7 @@ return GLUt]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBXDE88954A1A0A4CA18DCDA0D1C176886D">
+		<Item class="ModuleScript" referent="RBX4F486A29EF7F4040A8A0211856BEAC83">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
@@ -1262,9 +1289,12 @@ luaExprFuncs.staticGroupSize = function(state, staticState, t)
 	local zero_if_none = t[3] or false
 	local groupPath = glut.str_split(groupName, '.')
 	local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
-	if not success and not zero_if_none then StaticGroupErr(groupName)
-	else return 0 end
-	return toStr and tostring(#groupTbl) or #groupTbl
+	if not success and not zero_if_none then
+		StaticGroupErr(groupName)
+	elseif not success then
+		return 0
+	end
+	return (toStr and tostring(#groupTbl)) or #groupTbl
 end
 
 luaExprFuncs.moveFirstStaticElement = function(state, staticState, t)
@@ -1272,6 +1302,7 @@ luaExprFuncs.moveFirstStaticElement = function(state, staticState, t)
 	local groupName = t[1]
 	local destName = t[2]
 	local wantPart = t[3] or 'v' -- Do you want the key or the value?
+	local mayFail = t.mayFail or false
 	if wantPart ~= 'k' and wantPart ~= 'v' then error("WantPart must be nil|\"k\"|\"v\"!") end
 	local groupPath = glut.str_split(groupName, '.')
 	local destPath = glut.str_split(destName, '.')
@@ -1282,9 +1313,14 @@ luaExprFuncs.moveFirstStaticElement = function(state, staticState, t)
 	if not success then StaticGroupErr(destName) end
 	local groupKeys = glut.tbl_getkeys(groupTbl)
 	local firstKey = groupKeys[1]
+	if firstKey == nil and mayFail then return true end
 	local moving = nil
-	if type(firstKey) == "number" then moving = table.remove(groupTbl, firstKey)
-	else moving = groupTbl[firstKey] groupTbl[firstKey] = nil end
+	if type(firstKey) == "number" then 
+		moving = table.remove(groupTbl, firstKey)
+	else 
+		moving = groupTbl[firstKey]
+		groupTbl[firstKey] = nil 
+	end
 	if wantPart == 'k' then moving = firstKey end
 	destTbl[destKey] = moving
 	return true

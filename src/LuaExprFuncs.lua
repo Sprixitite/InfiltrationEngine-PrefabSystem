@@ -55,9 +55,12 @@ luaExprFuncs.staticGroupSize = function(state, staticState, t)
 	local zero_if_none = t[3] or false
 	local groupPath = glut.str_split(groupName, '.')
 	local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
-	if not success and not zero_if_none then StaticGroupErr(groupName)
-	else return 0 end
-	return toStr and tostring(#groupTbl) or #groupTbl
+	if not success and not zero_if_none then
+		StaticGroupErr(groupName)
+	elseif not success then
+		return 0
+	end
+	return (toStr and tostring(#groupTbl)) or #groupTbl
 end
 
 luaExprFuncs.moveFirstStaticElement = function(state, staticState, t)
@@ -65,6 +68,7 @@ luaExprFuncs.moveFirstStaticElement = function(state, staticState, t)
 	local groupName = t[1]
 	local destName = t[2]
 	local wantPart = t[3] or 'v' -- Do you want the key or the value?
+	local mayFail = t.mayFail or false
 	if wantPart ~= 'k' and wantPart ~= 'v' then error("WantPart must be nil|\"k\"|\"v\"!") end
 	local groupPath = glut.str_split(groupName, '.')
 	local destPath = glut.str_split(destName, '.')
@@ -75,9 +79,14 @@ luaExprFuncs.moveFirstStaticElement = function(state, staticState, t)
 	if not success then StaticGroupErr(destName) end
 	local groupKeys = glut.tbl_getkeys(groupTbl)
 	local firstKey = groupKeys[1]
+	if firstKey == nil and mayFail then return true end
 	local moving = nil
-	if type(firstKey) == "number" then moving = table.remove(groupTbl, firstKey)
-	else moving = groupTbl[firstKey] groupTbl[firstKey] = nil end
+	if type(firstKey) == "number" then 
+		moving = table.remove(groupTbl, firstKey)
+	else 
+		moving = groupTbl[firstKey]
+		groupTbl[firstKey] = nil 
+	end
 	if wantPart == 'k' then moving = firstKey end
 	destTbl[destKey] = moving
 	return true

@@ -110,8 +110,11 @@ function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mis
 	end
 	
 	local staticStates = {}
-	for _, prefabInstance in ipairs(prefabInstanceFolder:GetChildren()) do
+	for _, prefabInstance in ipairs(prefabInstanceFolder:GetDescendants()) do
 		local warn = warn.specialize(`PrefabInstance {prefabInstance.Name} is invalid`)
+		
+		if prefabInstance:IsA("Folder") then continue end
+		if prefabInstance.Parent:IsA("BasePart") then continue end
 		
 		if not prefabInstance:IsA("BasePart") then
 			warn(`Expected BasePart, got {prefabInstance.ClassName}. Skipping.`)
@@ -241,6 +244,14 @@ function prefabSystem.UnpackPrefabTargets(mission: Folder, targetGroup: Folder)
 		local missionPrefabTarget = mission:FindFirstChild(prefabTarget.Name) 
 		if missionPrefabTarget == nil then warn(`Destination {prefabTarget.Name} not present`, "Create it if needed") continue end
 		for _, prefabTargetItem in ipairs(prefabTarget:GetChildren()) do
+			local itemIsFolder = prefabTargetItem:IsA("Folder")
+			local missionFolder = missionPrefabTarget:FindFirstChild(prefabTargetItem.Name)
+			if itemIsFolder and missionFolder ~= nil then
+				for _, child in ipairs(prefabTargetItem:GetChildren()) do
+					child:Clone().Parent = missionFolder
+				end
+				continue
+			end
 			prefabTargetItem:Clone().Parent = missionPrefabTarget 
 		end
 	end
@@ -326,6 +337,19 @@ function prefabSystem.GetSortedAttributeList(instance)
 		local aIsLowP = string.match(a, "^lowp%.") ~= nil
 		local bIsLowP = string.match(b, "^lowp%.") ~= nil
 		
+		local aNumericP = string.match(a, "^(%d+)%.")
+		local bNumericP = string.match(b, "^(%d+)%.")
+		local aIsNumericP = aNumericP ~= nil
+		local bIsNumericP = bNumericP ~= nil
+		
+		if aIsNumericP and bIsNumericP then
+			return tonumber(aNumericP) < tonumber(bNumericP)
+		elseif aIsNumericP then
+			return true
+		elseif bIsNumericP then
+			return false
+		end
+		
 		if aIsHighP and not bIsHighP then
 			return true
 		elseif bIsHighP and not aIsHighP then
@@ -357,7 +381,7 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 			continue
 		end
 		
-		local pName = attrName:match("^highp%.(.+)$") or attrName:match("^lowp%.(.+)$")
+		local pName = attrName:match("^highp%.(.+)$") or attrName:match("^lowp%.(.+)$") or attrName:match("^%d+%.(.+)$")
 		if pName ~= nil then
 			root:SetAttribute(attrName, nil)
 			attrName = pName
@@ -379,6 +403,9 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 		local propName = attrName:match("^this%.([_%w]+)$")
 		if propName ~= nil then
 			local success, reason = pcall(function()
+				if typeof(root[propName]) == "EnumItem" then
+					interpolatedAttrValue = root[propName].EnumType:FromName(interpolatedAttrValue)
+				end
 				root[propName] = interpolatedAttrValue
 			end)
 			if not success then

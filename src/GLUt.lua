@@ -42,15 +42,19 @@ function GLUt.default_typed(arg, default, argName, funcName)
 	return default
 end
 
-function GLUt.type_warn(argName, funcName, expected, got)
+function GLUt.type_warn(argName, funcName, expected, got, isErr)
 	if argName == nil or expected == got then return end
+	isErr = GLUt.default(isErr, false)
+	
+	local logFun = isErr and GLUtCfg.error or GLUtCfg.warn
 
 	local warnStart = GLUt.type_is(funcName, "string") and (funcName .. ": expected arg \"") or "Expected arg \""
-	GLUtCfg.warn(warnStart .. argName .. "\" of type \"" .. expected .. "\" got type \"" .. got .. "\"!")
-	GLUtCfg.warn("Traceback: " .. debug.traceback())
+	logFun(warnStart .. argName .. "\" of type \"" .. expected .. "\" got type \"" .. got .. "\"!")
+	logFun("Traceback: " .. debug.traceback())
 end
 
-function GLUt.type_check(arg, expected, argName, funcName)
+function GLUt.type_check(arg, expected, argName, funcName, isErr)
+	isErr = GLUt.default(isErr, false)
 	local argType = GLUtCfg.type(arg)
 
 	expected = string.gsub(expected, '?', "|nil")
@@ -58,7 +62,7 @@ function GLUt.type_check(arg, expected, argName, funcName)
 		if validType == argType then return true end
 	end
 
-	GLUt.type_warn(argName, funcName, expected, argType)
+	GLUt.type_warn(argName, funcName, expected, argType, isErr)
 
 	return false
 end
@@ -215,6 +219,26 @@ function GLUt.tbl_clone(tbl, shallow)
 	return cloned
 end
 
+function GLUt.tbl_merge(tbl1, tbl2, priority)
+	priority = GLUt.default(priority, 1)
+	local secondPriority = priority == 2
+	local merged = {}
+	for k, v in pairs(tbl1) do
+		merged[k] = v
+	end
+	for k, v in pairs(tbl2) do
+		local existing = merged[k]
+		if GLUtCfg.type(existing) == "table" then
+			merged[k] = GLUt.tbl_merge(existing, v, priority)
+		elseif existing ~= nil and secondPriority then
+			merged[k] = v
+		elseif merged[k] == nil then
+			merged[k] = v
+		end
+	end
+	return merged
+end
+
 function GLUt.tbl_findsize(tbl)
 	local i = 0
 	for _, _ in pairs(tbl) do i = i + 1 end
@@ -260,6 +284,67 @@ function GLUt.tbl_all(tbl, f)
 		if not allSucceed then break end
 	end
 	return allSucceed
+end
+
+local function tbl_arginfo(argType, name, index, expectedType)
+	local typeStr = GLUt.type_is(expectedType, "string") and (" <T:" .. expectedType .. ">") or ""
+	return argType .. " \"" .. name .. "\" (#" .. tostring(index) .. ")" .. typeStr 
+end
+
+local function tbl_argextract(fname, t, arglayout)
+	local index = arglayout[1]
+	local name = arglayout[2]
+	local expectedType = arglayout[3]
+	local canName = arglayout[4]
+	local default = arglayout.Default or arglayout.default
+	local vital = GLUt.default(arglayout.Vital or arglayout.vital, false)
+	
+	local tVal = t[index]
+	if canName and tVal ~= nil then
+		if t[name] ~= nil then
+			return GLUtCfg.error(fname .. "@tblcall : " .. tbl_arginfo("Arg", name, index, expectedType) .. " passed both by name and index!")
+		end
+	elseif canName then
+		tVal = t[name]
+	end
+	
+	if tVal == nil and default ~= nil then
+		tVal = default
+	end
+	
+	if tVal == nil and expectedType == false then
+		return nil
+	elseif tVal == nil then
+		local argType = vital and "Vital Arg" or "Arg"
+		return GLUtCfg.error(fname .. "@tblcall : " .. tbl_arginfo(argType, name, index, expectedType) .. " not passed!")
+	end
+	
+	if expectedType == false then return tVal end
+	if not GLUt.type_check(tVal, expectedType, name, fname, true) then return nil end
+	return tVal
+end
+
+function GLUt.fun_tblcallable(fname, f, ...)
+	local n, callingConvention = GLUt.vararg_capture(...)
+	return function(tbl)
+		for k, v in pairs(tbl) do
+			local isValid = false
+			for i=1, n do
+				if isValid then break end
+				local validArg = callingConvention[i]
+				isValid = (k == i) or (k == validArg[2])
+			end
+			if not isValid then
+				GLUtCfg.error("Received unexpected argument \"" .. tostring(k) .. "\" of type \"" .. GLUtCfg.type(v) .. "\"!")
+			end
+		end
+		local args = {}
+		for i=1, n do
+			local argLayout = callingConvention[i]
+			args[i] = tbl_argextract(fname, tbl, argLayout)
+		end
+		return f(unpack(args, 1, n))
+	end
 end
 
 return GLUt

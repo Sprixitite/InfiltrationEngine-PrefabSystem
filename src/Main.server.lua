@@ -366,9 +366,51 @@ function prefabSystem.GetSortedAttributeList(instance)
 	return instanceAttrNames
 end
 
-function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, evaluator, evalData, attrCapture)
+function prefabSystem.IsProgrammable(inst)
+	for n, _ in pairs(inst:GetAttributes()) do
+		if glut.str_has_match(n, "ProgrammableDone$") then return true end
+	end
+	return false
+end
+
+function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, evaluator, evalData, attrCapture, programmableRecurse)
 	attrCapture = glut.default(attrCapture, {})
+	programmableRecurse = glut.default(programmableRecurse, false)
 	local warn = warnLogger.new("Attribute Evaluation", `{root.Parent}.{root}`)
+	
+	if prefabSystem.IsProgrammable(root) and not programmableRecurse then
+		local evalLimit = root:GetAttribute("ignore.ProgrammableEvalLimit")
+		if type(evalLimit) ~= "number" then evalLimit = 2000 end
+		
+		local attrCapture = glut.tbl_clone(attrCapture)
+		local allCaptured = {}
+		if not table.find(attrCapture, "ignore.ProgrammableDone") then table.insert(attrCapture, "ignore.ProgrammableDone") end
+		local i = 0
+		repeat
+			i = i + 1
+			local rootClone = root:Clone()
+			rootClone.Parent = root.Parent
+			local setQuery = prefabSystem.DeepAttributeEvaluator(
+				prefab,
+				rootClone,
+				evaluator,
+				evalData,
+				attrCapture,
+				true
+			)
+			local doneSet = setQuery["ignore.ProgrammableDone"][rootClone]
+			if doneSet then rootClone:Destroy() end
+			allCaptured = glut.tbl_merge(allCaptured, setQuery)
+		until doneSet or i >= evalLimit
+		if i >= evalLimit then
+			warn(
+				`Error evaluating programmable instance - did not finish after {evalLimit} evaluations`,
+				"If intentional - this limit may be altered by setting \"ignore.ProgrammableEvalLimit\" to a number of your choosing"
+			)
+		end
+		root:Destroy()
+		return allCaptured
+	end
 	
 	local setQuery = {}
 	for _, attrName in ipairs(prefabSystem.GetSortedAttributeList(root)) do
@@ -426,7 +468,7 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 	end
 	
 	for _, child in ipairs(root:GetChildren()) do
-		local childSet = prefabSystem.DeepAttributeEvaluator(prefab, child, evaluator, evalData, attrCapture)
+		local childSet = prefabSystem.DeepAttributeEvaluator(prefab, child, evaluator, evalData, attrCapture, programmableRecurse)
 		for attrName, hit in pairs(childSet) do
 			setQuery[attrName] = setQuery[attrName] or {}
 			local subTbl = setQuery[attrName]
@@ -439,11 +481,12 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 	return setQuery
 end
 
-function prefabSystem.CreateShebangFenv(state, staticState)
-	local tableLib = {}
-	for k, v in pairs(table) do tableLib[k] = v end
+function prefabSystem.CreateShebangFenv(inst, state, staticState)
+	local tableLib = glut.tbl_clone(table)
+	local stringLib = glut.tbl_clone(string)
 	
-	tableLib.getkeys = function(t) local keys = {} for k, _ in pairs(t) do table.insert(keys, k) end return keys end
+	stringLib.split = glut.str_split
+	tableLib.getkeys = glut.tbl_getkeys
 	
 	local fenvBase = {
 		state = state,
@@ -451,7 +494,7 @@ function prefabSystem.CreateShebangFenv(state, staticState)
 		staticState = staticState,
 		math = math,
 		table = tableLib,
-		string = string,
+		string = stringLib,
 		CFrame = CFrame,
 		Color3 = Color3,
 		Vector2 = Vector2,
@@ -461,7 +504,8 @@ function prefabSystem.CreateShebangFenv(state, staticState)
 		pairs = pairs,
 		ipairs = ipairs,
 		next = next,
-		print = print
+		print = print,
+		setAttributes = function(t) for k, v in pairs(t) do inst:SetAttribute(k, v) end return true end
 	}
 	
 	-- state can't overshadow builtin libraries
@@ -481,7 +525,7 @@ function prefabSystem.InterpolateValue(prefab: Folder, element: Instance, name: 
 		local warn = warn.specialize("ShebangScriptExec")
 		local success, count, args = glut.str_runlua(
 			shebangContents,
-			prefabSystem.CreateShebangFenv(instState, staticState),
+			prefabSystem.CreateShebangFenv(element, instState, staticState),
 			exprName
 		)
 		
@@ -500,7 +544,7 @@ function prefabSystem.InterpolateValue(prefab: Folder, element: Instance, name: 
 	
 	local success, evalResult = luaExpr.Eval(
 		value,
-		luaExprFuncs.CreateExprFenv(instState, staticState),
+		luaExprFuncs.CreateExprFenv(element, instState, staticState),
 		exprRules,
 		exprName,
 		false

@@ -99,8 +99,21 @@ end
 
 function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mission: Folder)
 	local warn = warnLogger.new("OnSerializerExport")
+	
 	local prefabFolder = mission:FindFirstChild("Prefabs")
 	if not prefabFolder then return end
+	
+	local first = true
+	repeat
+		if not first then coroutine.yield() end
+		local _, present = invokeState.Get("Sprix_AttributeAuditor_PreSerialize_Present")
+		local success, done = invokeState.Get("Sprix_AttributeAuditor_PreSerialize", "Done")
+		first = false
+	until (not present) or (success and done)
+	
+	if workspace:GetAttribute("EmeraldMode") then
+		print("Hi i'm prefabsystem :3")
+	end
 	
 	local prefabInstanceFolder = mission:FindFirstChild("PrefabInstances")
 	if not prefabInstanceFolder then

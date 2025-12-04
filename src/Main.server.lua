@@ -12,6 +12,7 @@ local apiConsumer = require(script.Parent.APIConsumer)
 
 local luaExpr = require(script.Parent.LuaExpr)
 local luaExprFuncs = require(script.Parent.LuaExprFuncs)
+local shebangFuncs = require(script.Parent.ShebangFuncs)
 local exprRules = luaExpr.MakeEvalRules("%$%(", "%)")
 
 type APIReference = apiConsumer.APIReference
@@ -97,7 +98,7 @@ function prefabSystem.OnAPIUnloaded(api: APIReference, prefabSystemState)
 	end
 end
 
-function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mission: Folder)
+function prefabSystem.OnSerializerExport(hookState: {any}, invokeState, mission: Folder)
 	local warn = warnLogger.new("OnSerializerExport")
 	
 	local prefabFolder = mission:FindFirstChild("Prefabs")
@@ -121,9 +122,15 @@ function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mis
 		prefabFolder:Destroy()
 		return
 	end
-	
+
+	local globalState = table.freeze({})
 	local staticStates = {}
-	for _, prefabInstance in ipairs(prefabInstanceFolder:GetDescendants()) do
+	local prefabInstances = prefabInstanceFolder:GetDescendants()
+	local i = 1
+	while i <= #prefabInstances do
+		local prefabInstance = prefabInstances[i]
+		i = i + 1
+		
 		local warn = warn.specialize(`PrefabInstance {prefabInstance.Name} is invalid`)
 		
 		if prefabInstance:IsA("Folder") then continue end
@@ -147,8 +154,11 @@ function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mis
 		end
 		
 		local prefabStatic = staticStates[instantiatingPrefab] or {}
-		prefabSystem.InstantiatePrefab(mission, instantiatingPrefab, prefabInstance, prefabStatic)
+		prefabSystem.InstantiatePrefab(mission, instantiatingPrefab, prefabInstance, prefabStatic, globalState)
 		staticStates[instantiatingPrefab] = prefabStatic
+		for _, i in ipairs(prefabInstanceFolder:GetDescendants()) do
+			if not table.find(prefabInstances, i) then prefabInstances[#prefabInstances+1] = i end
+		end
 	end
 	
 	for _, prefab in ipairs(prefabFolder:GetChildren()) do
@@ -163,63 +173,10 @@ function prefabSystem.OnSerializerExport(hookState: {any}, invokeState: nil, mis
 				prefab,
 				prefabTargetGroup,
 				prefabSystem.InterpolateValue,
-				{ Instance = prefabStatic, Static = prefabStatic }
+				{ Instance = prefabStatic, Static = prefabStatic, Global = globalState }
 			)
 		end)
 		
-		prefabSystem.UnpackPrefab(mission, prefab, "Programmable", function(mission, prefabTargetGroup)
-			local i = 0
-			local descendantsNotDone = 0	
-			local generatedFolder = Instance.new("Folder")
-			local evaluated = {}
-			repeat
-				descendantsNotDone = 0
-				local evaluating = prefabTargetGroup:Clone()
-				evaluated = prefabSystem.DeepAttributeEvaluator(
-					prefab,
-					evaluating,
-					prefabSystem.InterpolateValue,
-					{ Instance = prefabStatic, Static = prefabStatic },
-					{ "ignore.ProgrammableDone" }
-				)["ignore.ProgrammableDone"] or {}
-				
-				for _, descendant in ipairs(evaluating:GetDescendants()) do
-					local descendantIsFolder = descendant:IsA("Folder")
-					if descendantIsFolder then
-						if not glut.tbl_any(descendant:GetDescendants(), function(_, d) return evaluated[d] == false end) then
-							descendant:Destroy()
-							continue
-						end
-						descendant.Parent = generatedFolder
-						continue
-					end
-					
-					if evaluated[descendant] == true then descendant:Destroy() continue end
-					if evaluated[descendant] == false then
-						descendantsNotDone = descendantsNotDone + 1
-						continue
-					end
-					
-					warn(
-						`Programmable Instance {descendant} does not have mandatory ProgrammableDone property`,
-						`Instance will be destroyed`
-					)
-					descendant:Destroy()
-				end
-				
-				i = i + 1
-			until i > 2000 or descendantsNotDone <= 0
-			
-			if i > 2000 and descendantsNotDone > 0 then
-				warn("Programmable group evaluation for the following did not finish in 2000 iterations:")
-				for inst, v in pairs(evaluated) do
-					if v ~= false then continue end
-					warn(`\t{inst}`)
-				end
-			end
-			
-			return { generatedFolder }
-		end)
 	end
 	
 	-- Prevent these from being exported and taking up mission space
@@ -249,6 +206,10 @@ function prefabSystem.UnpackPrefabTargets(mission: Folder, targetGroup: Folder)
 	for _, prefabTarget in ipairs(targetGroup:GetChildren()) do
 		if prefabTarget.Name == "InstanceBase" then continue end
 		
+		if prefabTarget:IsA("ValueBase") then
+			continue
+		end
+		
 		if not prefabTarget:IsA("Folder") then
 			warn(`Expected Folder, got {prefabTarget.ClassName}`, "Target will be ignored")
 			continue
@@ -270,7 +231,7 @@ function prefabSystem.UnpackPrefabTargets(mission: Folder, targetGroup: Folder)
 	end
 end
 
-function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabInstance: BasePart, staticState)
+function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabInstance: BasePart, staticState, globalState)
 	local warn = warnLogger.new("InstantiatePrefab", `Prefab {prefab.Name}`)
 	
 	local instanceTargetGroup = prefab:FindFirstChild("Instance") or prefab:FindFirstChild("instance")
@@ -323,10 +284,18 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 	local cfrSet = prefabSystem.DeepAttributeEvaluator(
 		prefab,
 		instanceData,
-		prefabSystem.InterpolateValue, 
-		{ Instance = instanceSettings, Static = staticState },
+		prefabSystem.InterpolateValue,
+		{ Instance = instanceSettings, Static = staticState, Global = globalState },
 		{ "this.CFrame" }
 	)["this.CFrame"] or {}
+	staticState.Attrs = staticState.Attrs or {}
+	staticState.Attr = staticState.Attrs
+	local staticAttrs = staticState.Attrs
+	for k, v in pairs(instanceSettings) do
+		staticAttrs[k] = staticAttrs[k] or {}
+		local attrTbl = staticAttrs[k]
+		table.insert(attrTbl, v)
+	end
 	
 	for _, prefabElement in pairs(instanceData:GetDescendants()) do
 		if prefabElement == instanceBase then continue end
@@ -494,51 +463,20 @@ function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, eva
 	return setQuery
 end
 
-function prefabSystem.CreateShebangFenv(inst, state, staticState)
-	local tableLib = glut.tbl_clone(table)
-	local stringLib = glut.tbl_clone(string)
-	
-	stringLib.split = glut.str_split
-	tableLib.getkeys = glut.tbl_getkeys
-	
-	local fenvBase = {
-		state = state,
-		static = staticState,
-		staticState = staticState,
-		math = math,
-		table = tableLib,
-		string = stringLib,
-		CFrame = CFrame,
-		Color3 = Color3,
-		Vector2 = Vector2,
-		Vector3 = Vector3,
-		tostring = tostring,
-		tonumber = tonumber,
-		pairs = pairs,
-		ipairs = ipairs,
-		next = next,
-		print = print,
-		setAttributes = function(t) for k, v in pairs(t) do inst:SetAttribute(k, v) end return true end
-	}
-	
-	-- state can't overshadow builtin libraries
-	setmetatable(fenvBase, { __index = state })
-	return fenvBase
-end
-
 function prefabSystem.InterpolateValue(prefab: Folder, element: Instance, name: string, value: string, state: { [string] : any }) : any
 	local exprName = `{element.Parent}.{element}:{name}`
 	local warn = warnLogger.new("Attribute Interpolation", exprName)
 	
 	local instState = state.Instance
 	local staticState = state.Static
+	local globalState = state.Global
 	
 	local shebangContents = string.match(value, "^#!/lua%s+(.*)$")
 	if shebangContents ~= nil then
 		local warn = warn.specialize("ShebangScriptExec")
 		local success, count, args = glut.str_runlua(
 			shebangContents,
-			prefabSystem.CreateShebangFenv(element, instState, staticState),
+			shebangFuncs.CreateShebangFenv(element, instState, staticState, globalState),
 			exprName
 		)
 		

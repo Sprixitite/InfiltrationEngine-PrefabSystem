@@ -196,7 +196,7 @@ function GLUt.tbl_deepget(tbl, create_missing, ...)
 		indexing = indexing[k]
 	end
 	
-	return true, indexing
+	return GLUt.type_is(indexing, "table"), indexing
 end
 
 function GLUt.tbl_getkeys(tbl)
@@ -286,6 +286,15 @@ function GLUt.tbl_all(tbl, f)
 	return allSucceed
 end
 
+function GLUt.tbl_is_arr(tbl)
+	local isArr = true
+	for k, v in pairs(tbl) do
+		isArr = isArr and GLUtCfg.type(k) == "number"
+		if not isArr then break end
+	end
+	return isArr
+end
+
 local function tbl_arginfo(argType, name, index, expectedType)
 	local typeStr = GLUt.type_is(expectedType, "string") and (" <T:" .. expectedType .. ">") or ""
 	return argType .. " \"" .. name .. "\" (#" .. tostring(index) .. ")" .. typeStr 
@@ -314,7 +323,7 @@ local function tbl_argextract(fname, t, arglayout)
 	
 	if tVal == nil and expectedType == false then
 		return nil
-	elseif tVal == nil then
+	elseif tVal == nil and not GLUt.str_has_match(expectedType, "%?") then
 		local argType = vital and "Vital Arg" or "Arg"
 		return GLUtCfg.error(fname .. "@tblcall : " .. tbl_arginfo(argType, name, index, expectedType) .. " not passed!")
 	end

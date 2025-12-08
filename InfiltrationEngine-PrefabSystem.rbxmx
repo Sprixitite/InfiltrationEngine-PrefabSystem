@@ -1,7 +1,7 @@
 <roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
 	<External>null</External>
 	<External>nil</External>
-	<Item class="Folder" referent="RBX0DA1522B043047E29C0A8DE4A16526B0">
+	<Item class="Folder" referent="RBX521574CD24904C15932958493CB81BA5">
 		<Properties>
 			<BinaryString name="AttributesSerialize"></BinaryString>
 			<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -10,7 +10,7 @@
 			<int64 name="SourceAssetId">-1</int64>
 			<BinaryString name="Tags"></BinaryString>
 		</Properties>
-		<Item class="Script" referent="RBX64069B9995574B18BC6CFD5D62CE6E1F">
+		<Item class="Script" referent="RBXBE4F87B58EBE410CB2284491575251B8">
 			<Properties>
 				<ProtectedString name="Source"><![CDATA[local warnLogger = require(script.Parent.Slogger).init{
 	postInit = table.freeze,
@@ -155,7 +155,7 @@ function prefabSystem.ImportAttributesForPrefab(prefabName)
 	local importing = {}
 	for attrName, attrDefault in pairs(instanceBase:GetAttributes()) do
 		if glut.str_has_match(attrName, "^noimp%.") then continue end
-		importing[attrName] = { type(attrDefault), attrDefault }
+		importing[attrName:gsub("^imponly%.", "")] = { type(attrDefault), attrDefault }
 	end
 	
 	return importing
@@ -363,6 +363,7 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 	
 	local instanceSettings = {}
 	for k, v in pairs(instanceBase:GetAttributes()) do
+		if glut.str_has_match(k, "^imponly%.") then continue end
 		instanceSettings[k:gsub("^noimp%.", "")] = v
 	end
 	
@@ -744,7 +745,7 @@ apiConsumer.DoAPILoop(plugin, API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnA
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBXE3ED6761E617448D88CEFA079CA2B30F">
+		<Item class="ModuleScript" referent="RBX043E84C0F12243FEBAFFDBE5D03F1550">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -896,7 +897,7 @@ return APIConsumer]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX3D84E76A357C4FA3A16A65B3C7BC42FF">
+		<Item class="ModuleScript" referent="RBX38619AE0960A4221A3CE692CDD7F1488">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -974,7 +975,7 @@ return slogger]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX7A7F33AE968D4F9085E7C3EEC95E816F">
+		<Item class="ModuleScript" referent="RBX335D78C2645E44C58D047A8C76F96E56">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
@@ -1044,7 +1045,7 @@ return LuaExpr]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX5939D6A997BC4CB18A22A9FA720EB377">
+		<Item class="ModuleScript" referent="RBX6C1B1931EB944E03A1F2A16B100EE7EA">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -1477,7 +1478,7 @@ return GLUt]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX99CD90B9F69D4683BE8907878DB73707">
+		<Item class="ModuleScript" referent="RBX248D8F0CCA0443449F04D75A595685A6">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
@@ -1809,7 +1810,7 @@ return luaExprFuncs]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBXE188EF383D304E06AC52F9D5811BC0B6">
+		<Item class="ModuleScript" referent="RBXEEAEEB34AC6F4043984529B915EAB2FD">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
@@ -1880,7 +1881,7 @@ return ShebangFuncs
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX6AF5E70D0C8B4AC98B7D8024179FD406">
+		<Item class="ModuleScript" referent="RBXE9AAD2192B06430FB9BF754985805042">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[return {

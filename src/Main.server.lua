@@ -141,7 +141,7 @@ function prefabSystem.ImportAttributesForPrefab(prefabName)
 	local importing = {}
 	for attrName, attrDefault in pairs(instanceBase:GetAttributes()) do
 		if glut.str_has_match(attrName, "^noimp%.") then continue end
-		importing[attrName] = { type(attrDefault), attrDefault }
+		importing[attrName:gsub("^imponly%.", "")] = { type(attrDefault), attrDefault }
 	end
 	
 	return importing
@@ -349,6 +349,7 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 	
 	local instanceSettings = {}
 	for k, v in pairs(instanceBase:GetAttributes()) do
+		if glut.str_has_match(k, "^imponly%.") then continue end
 		instanceSettings[k:gsub("^noimp%.", "")] = v
 	end
 	

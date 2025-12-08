@@ -1,7 +1,7 @@
 <roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
 	<External>null</External>
 	<External>nil</External>
-	<Item class="Folder" referent="RBX1DFF3ACF80F946319EA676FAEA2AE220">
+	<Item class="Folder" referent="RBX0DA1522B043047E29C0A8DE4A16526B0">
 		<Properties>
 			<BinaryString name="AttributesSerialize"></BinaryString>
 			<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -10,7 +10,7 @@
 			<int64 name="SourceAssetId">-1</int64>
 			<BinaryString name="Tags"></BinaryString>
 		</Properties>
-		<Item class="Script" referent="RBX157E730CA77847868BFE1D999458BFDD">
+		<Item class="Script" referent="RBX64069B9995574B18BC6CFD5D62CE6E1F">
 			<Properties>
 				<ProtectedString name="Source"><![CDATA[local warnLogger = require(script.Parent.Slogger).init{
 	postInit = table.freeze,
@@ -98,17 +98,109 @@ local SPECIAL_FUNCS = {
 }
 
 function prefabSystem.OnAPILoaded(api: APIReference, prefabSystemState)
+	prefabSystemState.Hooks = prefabSystemState.Hooks or {}
+	prefabSystemState.ExtHooks = prefabSystemState.ExtHooks or {}
+	prefabSystemState.ApiExtensions = prefabSystemState.ApiExtensions or {}
+	prefabSystem.OnAPIUnloaded(api, prefabSystemState)
+	
 	hookName = api.GetRegistrantFactory("Sprix", "PrefabSystem")
-	prefabSystemState.ExportCallbackToken = api.AddHook("PreSerialize", hookName("PreSerialize"), prefabSystem.OnSerializerExport)
+	local attributeImporterAPI = api.GetAPIExtension("AttributeImporter", "Sprix")
+	if attributeImporterAPI then
+		prefabSystem.OnAPIExtensionLoaded(prefabSystemState, nil, "AttributeImporter", "Sprix", attributeImporterAPI)
+	end
+	
+	prefabSystemState.Hooks[1] = api.AddHook("PreSerialize", hookName("PreSerialize"), prefabSystem.OnSerializerExport)
+	prefabSystemState.Hooks[2] = api.AddHook("APIExtensionLoaded", hookName("APIExtensionLoaded"), prefabSystem.OnAPIExtensionLoaded, prefabSystemState)
+	prefabSystemState.Hooks[3] = api.AddHook("APIExtensionUnloaded", hookName("APIExtensionUnloaded"), prefabSystem.OnAPIExtensionUnloaded, prefabSystemState)
+end
+
+function prefabSystem.ImportAttributesForPrefab(prefabName)
+	local warn = warn.specialize("AttributeImport")
+	
+	local mission = workspace:FindFirstChild("DebugMission")
+	if mission == nil then
+		warn("No Mission folder found!")
+	end
+	
+	local prefabs = mission:FindFirstChild("Prefabs")
+	
+	if prefabs == nil then
+		warn("No Prefabs folder found!")
+		return {} 
+	end
+	
+	local prefab = nil
+	for _, potentialPrefab in ipairs(prefabs:GetChildren()) do
+		if potentialPrefab.Name ~= prefabName then continue end
+		prefab = potentialPrefab
+	end
+	
+	if prefab == nil then
+		warn(`Prefab {prefabName} not found!`)
+		return {} 
+	end
+	
+	local instance = prefab:FindFirstChild("Instance")
+	if instance == nil then
+		warn(`Failed to find instance scope for Prefab {prefabName}`)
+		return {} 
+	end
+	
+	local instanceBase = instance:FindFirstChild("InstanceBase")
+	if instanceBase == nil then
+		warn(`Failed to find InstanceBase for Prefab {prefabName}`)
+		return {}
+	end
+	
+	local importing = {}
+	for attrName, attrDefault in pairs(instanceBase:GetAttributes()) do
+		if glut.str_has_match(attrName, "^noimp%.") then continue end
+		importing[attrName] = { type(attrDefault), attrDefault }
+	end
+	
+	return importing
+end
+
+function prefabSystem.OnAPIExtensionLoaded(prefabSystemState, _, name, author, contents)
+	if author ~= "Sprix" or name ~= "AttributeImporter" then return end
+	prefabSystemState.ExtHooks[1] = {
+		Name = "AttributeImporter",
+		Auth = "Sprix",
+		Dereg = "RemoveAbstractionImporter",
+		Token = contents.AddAbstractionImporter(
+			"PrefabSystem",
+			require("./AttributeImporterSearchInfo"),
+			prefabSystem.ImportAttributesForPrefab
+		)	
+	}
+end
+
+local extHookIter = glut.custom_iter_template("Name", "Auth", "Dereg", "Token")
+function prefabSystem.OnAPIExtensionUnloaded(prefabSystemState, _, name, author, contents)
+	local removing = {}
+	for i, extName, extAuth, extDereg, extToken in extHookIter(prefabSystemState.ExtHooks) do
+		if name ~= extName or author ~= extAuth then continue end
+		if contents[extDereg] == nil then continue end
+		contents[extDereg](extToken)
+		removing[#removing] = i
+	end
+	for idx=#removing, 1, -1 do
+		table.remove(prefabSystemState.ExtHooks, removing[idx])
+	end 
 end
 
 function prefabSystem.OnAPIUnloaded(api: APIReference, prefabSystemState)
-	if prefabSystemState.ExportCallbackToken then
-		-- The unload function passed to DoAPILoop is called
-		-- both when the API unloads, and when this plugin unloads
-		-- as a result, removing any hooks in the unload function is no longer
-		-- a "formality", but rather required
-		api.RemoveHook(prefabSystemState.ExportCallbackToken)
+	for _, token in ipairs(prefabSystemState.Hooks) do
+		api.RemoveHook(token)
+	end
+	for i, extName, extAuth, extDereg, extToken in extHookIter(prefabSystemState.ExtHooks) do
+		local ext = api.GetAPIExtension(extName, extAuth)
+		if ext == nil then continue end
+		if ext[extDereg] == nil then continue end
+		ext[extDereg](extToken)
+	end
+	for _, extToken in ipairs(prefabSystemState.ApiExtensions) do
+		api.RemoveAPIExtension(extToken)
 	end
 end
 
@@ -198,13 +290,6 @@ function prefabSystem.OnSerializerExport(hookState: {any}, invokeState, mission:
 	prefabInstanceFolder:Destroy()
 end
 
-function prefabSystem.GetInstanceAncestors(inst, untilInst, ancestors)
-	ancestors = glut.default(ancestors, {})
-	if inst == nil or inst == untilInst or inst.Parent == nil or inst.Parent == untilInst then return ancestors end
-	ancestors[#ancestors+1] = inst.Parent
-	return prefabSystem.GetInstanceAncestors(inst.Parent, untilInst, ancestors)
-end
-
 function prefabSystem.UnpackPrefab(mission: Folder, prefab: Folder, scope: string, preUnpack)
 	preUnpack = glut.default(preUnpack, function() end)
 	for _, prefabTargetGroup in ipairs(prefab:GetChildren()) do
@@ -253,7 +338,7 @@ function prefabSystem.UnpackPrefabTargets(mission: Folder, targetGroup: Folder)
 end
 
 function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabInstance: BasePart, staticState, globalState)
-	local warn = warnLogger.new("InstantiatePrefab", `Prefab {prefab.Name}`)
+	local warn = warn.specialize("InstantiatePrefab", `Prefab {prefab.Name}`)
 	
 	local instanceTargetGroup = prefab:FindFirstChild("Instance") or prefab:FindFirstChild("instance")
 	if not instanceTargetGroup then
@@ -276,12 +361,17 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 	local sFuncStructure = prefabSystem.CollectSpecFuncAttrs(prefab, instanceBase, SPECIAL_FUNCS)
 	prefabSystem.EvaluateSpecFuncs(prefab, prefabInstance, SPECIAL_FUNCS, sFuncStructure)
 	
-	local instanceSettings = instanceBase:GetAttributes()
+	local instanceSettings = {}
+	for k, v in pairs(instanceBase:GetAttributes()) do
+		instanceSettings[k:gsub("^noimp%.", "")] = v
+	end
+	
 	for settingName, instanceValue in pairs(prefabInstance:GetAttributes()) do
 		local warn = warn.specialize(`Ignoring invalid attribute {settingName}`)
 		
 		if settingName == "PrefabName" then continue end
 		
+		settingName = string.gsub(settingName, "^noimp%.", "")
 		local defaultValue = instanceSettings[settingName] 
 		
 		if type(defaultValue) == "string" then
@@ -654,7 +744,7 @@ apiConsumer.DoAPILoop(plugin, API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnA
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX3EF9CD4E039546318A67C986FAF719A8">
+		<Item class="ModuleScript" referent="RBXE3ED6761E617448D88CEFA079CA2B30F">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -806,7 +896,7 @@ return APIConsumer]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX97522CA836A34925B5B14944DC52019B">
+		<Item class="ModuleScript" referent="RBX3D84E76A357C4FA3A16A65B3C7BC42FF">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -884,7 +974,7 @@ return slogger]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBXA4C9AEE02D244F3680AAC263CA2E96EA">
+		<Item class="ModuleScript" referent="RBX7A7F33AE968D4F9085E7C3EEC95E816F">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
@@ -954,7 +1044,7 @@ return LuaExpr]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX99162AA1E8CB4309B58CAD509C8E6815">
+		<Item class="ModuleScript" referent="RBX5939D6A997BC4CB18A22A9FA720EB377">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[--[[
@@ -974,6 +1064,27 @@ local GLUtCfg = {
 
 local patternSpecChars = { '(', ')', '.', '%', '+', '-', '*', '?', '[', ']', '^', '$' }
 
+GLUt.severity = {
+	SILENT = 0,
+	LOG = 1,
+	WARN = 2,
+	ERR = 3,
+	ERROR = 3
+}
+
+local function severity_warn(sev, ...)
+	if sev == GLUt.severity.SILENT then return end
+	local warn_fn
+	if sev == GLUt.severity.LOG then
+		warn_fn = GLUtCfg.print
+	elseif sev == GLUt.severity.WARN then
+		warn_fn = GLUtCfg.warn
+	else
+		warn_fn = GLUtCfg.error
+	end
+	warn_fn(...)
+end
+
 function GLUt.configure(tbl)
 	for k, v in pairs(tbl) do
 		if GLUtCfg[k] ~= nil then
@@ -984,12 +1095,38 @@ function GLUt.configure(tbl)
 	end
 end
 
+function GLUt.custom_iter(tbl, keys)
+	local i = 0
+	return function()
+		i = i + 1
+		local requested = {}
+		local iTbl = tbl[i]
+		if iTbl == nil then return nil end
+		for ki, k in ipairs(keys) do
+			requested[ki] = iTbl[k]
+		end 
+		return i, unpack(requested)
+	end
+end
+
+function GLUt.custom_iter_template(...)
+	local varargs = { ... }
+	return function(tbl) return GLUt.custom_iter(tbl, varargs) end
+end
+
 function GLUt.default(arg, default)
 	return (arg == nil) and default or arg
 end
 
 function GLUt.default_exec(arg, fn)
 	return (arg == nil) and fn() or arg
+end
+
+function GLUt.default_bounds(arg, default, min, max)
+	if arg == nil then return default end
+	if arg < min then return default end
+	if max < arg then return default end
+	return arg
 end
 
 function GLUt.default_typed(arg, default, argName, funcName)
@@ -1001,19 +1138,19 @@ function GLUt.default_typed(arg, default, argName, funcName)
 	return default
 end
 
-function GLUt.type_warn(argName, funcName, expected, got, isErr)
+function GLUt.type_warn(argName, funcName, expected, got, severity)
 	if argName == nil or expected == got then return end
-	isErr = GLUt.default(isErr, false)
-	
-	local logFun = isErr and GLUtCfg.error or GLUtCfg.warn
+	if type(severity) == "boolean" then
+		severity = severity and GLUt.severity.ERROR or GLUt.severity.WARN 
+	end
+	severity = GLUt.default_bounds(severity, GLUt.severity.ERROR, GLUt.severity.SILENT, GLUt.severity.ERROR)
 
 	local warnStart = GLUt.type_is(funcName, "string") and (funcName .. ": expected arg \"") or "Expected arg \""
-	logFun(warnStart .. argName .. "\" of type \"" .. expected .. "\" got type \"" .. got .. "\"!")
-	logFun("Traceback: " .. debug.traceback())
+	severity_warn(severity, warnStart .. argName .. "\" of type \"" .. expected .. "\" got type \"" .. got .. "\"!")
+	severity_warn(severity, "Traceback: " .. debug.traceback())
 end
 
-function GLUt.type_check(arg, expected, argName, funcName, isErr)
-	isErr = GLUt.default(isErr, false)
+function GLUt.type_check(arg, expected, argName, funcName, severity)
 	local argType = GLUtCfg.type(arg)
 
 	expected = string.gsub(expected, '?', "|nil")
@@ -1021,7 +1158,7 @@ function GLUt.type_check(arg, expected, argName, funcName, isErr)
 		if validType == argType then return true end
 	end
 
-	GLUt.type_warn(argName, funcName, expected, argType, isErr)
+	GLUt.type_warn(argName, funcName, expected, argType, severity)
 
 	return false
 end
@@ -1090,6 +1227,21 @@ function GLUt.str_chariter(str)
 	end
 end
 
+function GLUt.str_trim(str, pattern)
+	pattern = GLUt.default(pattern, "%s")
+	return GLUt.str_trimend(GLUt.str_trimstart(str, pattern), pattern)
+end
+
+function GLUt.str_trimstart(str, pattern)
+	pattern = GLUt.default(pattern, "%s")
+	return string.gsub(str, '^' .. pattern, "")
+end
+
+function GLUt.str_trimend(str, pattern)
+	pattern = GLUt.default(pattern, "%s")
+	return string.gsub(str, pattern .. '$', "")
+end
+
 function GLUt.str_getchar(str, i)
 	return string.sub(str, i, i)
 end
@@ -1142,20 +1294,20 @@ end
 
 function GLUt.tbl_deepget(tbl, create_missing, ...)
 	local indexing = tbl
-	for _, k in GLUt.vararg_iter(...) do
+	for i, k, n in GLUt.vararg_iter(...) do
 		k = tostring(k)
-		if GLUtCfg.type(indexing) ~= "table" then
-			return false, indexing
-		end
-		
+
 		if indexing[k] == nil and create_missing then
 			indexing[k] = {}
 		end
-		
+
 		indexing = indexing[k]
+		if GLUtCfg.type(indexing) ~= "table" and not (i == n) then
+			return false, indexing, k
+		end
 	end
-	
-	return GLUt.type_is(indexing, "table"), indexing
+
+	return true, indexing
 end
 
 function GLUt.tbl_getkeys(tbl)
@@ -1266,7 +1418,7 @@ local function tbl_argextract(fname, t, arglayout)
 	local canName = arglayout[4]
 	local default = arglayout.Default or arglayout.default
 	local vital = GLUt.default(arglayout.Vital or arglayout.vital, false)
-	
+
 	local tVal = t[index]
 	if canName and tVal ~= nil then
 		if t[name] ~= nil then
@@ -1275,18 +1427,18 @@ local function tbl_argextract(fname, t, arglayout)
 	elseif canName then
 		tVal = t[name]
 	end
-	
+
 	if tVal == nil and default ~= nil then
 		tVal = default
 	end
-	
+
 	if tVal == nil and expectedType == false then
 		return nil
 	elseif tVal == nil and not GLUt.str_has_match(expectedType, "%?") then
 		local argType = vital and "Vital Arg" or "Arg"
 		return GLUtCfg.error(fname .. "@tblcall : " .. tbl_arginfo(argType, name, index, expectedType) .. " not passed!")
 	end
-	
+
 	if expectedType == false then return tVal end
 	if not GLUt.type_check(tVal, expectedType, name, fname, true) then return nil end
 	return tVal
@@ -1325,7 +1477,7 @@ return GLUt]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX558D490A6DB4481592B62A7FA3ACFB54">
+		<Item class="ModuleScript" referent="RBX99CD90B9F69D4683BE8907878DB73707">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
@@ -1422,6 +1574,28 @@ luaExprFuncs.unpackToState = ExprFunc(
 	{ 17, "state#16", "string?", false, default=nil }
 )
 
+luaExprFuncs.staticGroupToLocalArray = ExprFunc(
+	"staticGroupToLocalArray",
+	function(inst, state, staticState, groupName, elementPrefix, stateScriptAccess)
+		local groupPath = glut.str_split(groupName, '.')
+		local success, groupTbl = glut.tbl_deepget(state, unpack(groupPath))
+		if not success then StaticGroupErr(groupName) end
+		inst:SetAttribute(elementPrefix .. "Count", #groupTbl)
+		local statescriptAccessor = "INIT #StateScriptAccessLocalArrayTemp 0"
+		for i, v in ipairs(groupTbl) do
+			statescriptAccessor = statescriptAccessor .. "\n SET #StateScriptAccessLocalArrayTemp #" .. elementPrefix .. tostring(i) 
+			inst:SetAttribute(elementPrefix .. tostring(i), v)
+		end
+		if stateScriptAccess ~= "NO!" then
+			inst:SetAttribute(stateScriptAccess, statescriptAccessor)
+		end
+		return true
+	end,
+	{ 1, "groupName", "string", false, vital=true },
+	{ 2, "elementPrefix", "string", false, vital=true },
+	{ 3, "stateScriptAccess", "string", true, default="NO!" }
+)
+
 luaExprFuncs.importStaticGroup = ExprFunc(
 	"importStaticGroup",
 	function(inst, state, staticState, groupName, importLocation, allowDuplicates)
@@ -1444,7 +1618,6 @@ luaExprFuncs.importStaticGroup = ExprFunc(
 			groupTbl = noDupes
 		end
 		importTbl[importKey] = groupTbl
-		print(state, importTbl)
 		return true
 	end,
 	{ 1, "groupName", "string", false, vital=true },
@@ -1480,19 +1653,22 @@ luaExprFuncs.staticGroupCombine = ExprFunc(
 		suffix,
 		field,
 		itemPrefix,
-		itemSuffix
+		itemSuffix,
+		autoBrackets
 	)
 		-- Concatenates the string representation of all members of a staticState group, using the specified operator inbetween all elements
 		local groupPath = glut.str_split(groupName, '.')
 		local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
 		if not success then StaticGroupErr(groupName) end
-		local str = prefix .. "("
+		local openBracket = autoBrackets and "(" or ""
+		local closeBracket = autoBrackets and ")" or ""
+		local str = prefix .. openBracket
 		for i, v in ipairs(groupTbl) do
 			if i ~= 1 then str = str .. combineOp end
 			local vStr = (field == nil) and tostring(v) or tostring(v[field])
 			str = str .. itemPrefix .. vStr .. itemSuffix
 		end
-		str = str .. ")" .. suffix
+		str = str .. closeBracket .. suffix
 		return str
 	end,
 	{ 1, "groupName", "string", false, vital=true },
@@ -1501,7 +1677,8 @@ luaExprFuncs.staticGroupCombine = ExprFunc(
 	{ 4, "suffix", "string", true, default="" },
 	{ 5, "field", false, true, default=nil },
 	{ 6, "itemPrefix", "string", true, default="" },
-	{ 7, "itemSuffix", "string", true, default="" }
+	{ 7, "itemSuffix", "string", true, default="" },
+	{ 8, "autoBrackets", "boolean", true, default=true }
 )
 
 luaExprFuncs.staticGroupEmpty = ExprFunc(
@@ -1632,7 +1809,7 @@ return luaExprFuncs]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX3529C4E7B3044672B7744CF1269D9A2D">
+		<Item class="ModuleScript" referent="RBXE188EF383D304E06AC52F9D5811BC0B6">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
@@ -1699,6 +1876,25 @@ return ShebangFuncs
 				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
 				<bool name="DefinesCapabilities">false</bool>
 				<string name="Name">ShebangFuncs</string>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBX6AF5E70D0C8B4AC98B7D8024179FD406">
+			<Properties>
+				<Content name="LinkedSource"><null></null></Content>
+				<ProtectedString name="Source"><![CDATA[return {
+	FolderPath 		= { "PrefabInstances" },
+	ValidClasses 	= { "BasePart" },
+	ImportsGlobals 	= false,
+	FolderRelation 	= "descendant",
+	TypeIsAttribute = "PrefabName"
+}]]></ProtectedString>
+				<string name="ScriptGuid">{40183D36-6F16-44E7-AF38-F9E87356718B}</string>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+				<bool name="DefinesCapabilities">false</bool>
+				<string name="Name">AttributeImporterSearchInfo</string>
 				<int64 name="SourceAssetId">-1</int64>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>

@@ -84,17 +84,109 @@ local SPECIAL_FUNCS = {
 }
 
 function prefabSystem.OnAPILoaded(api: APIReference, prefabSystemState)
+	prefabSystemState.Hooks = prefabSystemState.Hooks or {}
+	prefabSystemState.ExtHooks = prefabSystemState.ExtHooks or {}
+	prefabSystemState.ApiExtensions = prefabSystemState.ApiExtensions or {}
+	prefabSystem.OnAPIUnloaded(api, prefabSystemState)
+	
 	hookName = api.GetRegistrantFactory("Sprix", "PrefabSystem")
-	prefabSystemState.ExportCallbackToken = api.AddHook("PreSerialize", hookName("PreSerialize"), prefabSystem.OnSerializerExport)
+	local attributeImporterAPI = api.GetAPIExtension("AttributeImporter", "Sprix")
+	if attributeImporterAPI then
+		prefabSystem.OnAPIExtensionLoaded(prefabSystemState, nil, "AttributeImporter", "Sprix", attributeImporterAPI)
+	end
+	
+	prefabSystemState.Hooks[1] = api.AddHook("PreSerialize", hookName("PreSerialize"), prefabSystem.OnSerializerExport)
+	prefabSystemState.Hooks[2] = api.AddHook("APIExtensionLoaded", hookName("APIExtensionLoaded"), prefabSystem.OnAPIExtensionLoaded, prefabSystemState)
+	prefabSystemState.Hooks[3] = api.AddHook("APIExtensionUnloaded", hookName("APIExtensionUnloaded"), prefabSystem.OnAPIExtensionUnloaded, prefabSystemState)
+end
+
+function prefabSystem.ImportAttributesForPrefab(prefabName)
+	local warn = warn.specialize("AttributeImport")
+	
+	local mission = workspace:FindFirstChild("DebugMission")
+	if mission == nil then
+		warn("No Mission folder found!")
+	end
+	
+	local prefabs = mission:FindFirstChild("Prefabs")
+	
+	if prefabs == nil then
+		warn("No Prefabs folder found!")
+		return {} 
+	end
+	
+	local prefab = nil
+	for _, potentialPrefab in ipairs(prefabs:GetChildren()) do
+		if potentialPrefab.Name ~= prefabName then continue end
+		prefab = potentialPrefab
+	end
+	
+	if prefab == nil then
+		warn(`Prefab {prefabName} not found!`)
+		return {} 
+	end
+	
+	local instance = prefab:FindFirstChild("Instance")
+	if instance == nil then
+		warn(`Failed to find instance scope for Prefab {prefabName}`)
+		return {} 
+	end
+	
+	local instanceBase = instance:FindFirstChild("InstanceBase")
+	if instanceBase == nil then
+		warn(`Failed to find InstanceBase for Prefab {prefabName}`)
+		return {}
+	end
+	
+	local importing = {}
+	for attrName, attrDefault in pairs(instanceBase:GetAttributes()) do
+		if glut.str_has_match(attrName, "^noimp%.") then continue end
+		importing[attrName] = { type(attrDefault), attrDefault }
+	end
+	
+	return importing
+end
+
+function prefabSystem.OnAPIExtensionLoaded(prefabSystemState, _, name, author, contents)
+	if author ~= "Sprix" or name ~= "AttributeImporter" then return end
+	prefabSystemState.ExtHooks[1] = {
+		Name = "AttributeImporter",
+		Auth = "Sprix",
+		Dereg = "RemoveAbstractionImporter",
+		Token = contents.AddAbstractionImporter(
+			"PrefabSystem",
+			require("./AttributeImporterSearchInfo"),
+			prefabSystem.ImportAttributesForPrefab
+		)	
+	}
+end
+
+local extHookIter = glut.custom_iter_template("Name", "Auth", "Dereg", "Token")
+function prefabSystem.OnAPIExtensionUnloaded(prefabSystemState, _, name, author, contents)
+	local removing = {}
+	for i, extName, extAuth, extDereg, extToken in extHookIter(prefabSystemState.ExtHooks) do
+		if name ~= extName or author ~= extAuth then continue end
+		if contents[extDereg] == nil then continue end
+		contents[extDereg](extToken)
+		removing[#removing] = i
+	end
+	for idx=#removing, 1, -1 do
+		table.remove(prefabSystemState.ExtHooks, removing[idx])
+	end 
 end
 
 function prefabSystem.OnAPIUnloaded(api: APIReference, prefabSystemState)
-	if prefabSystemState.ExportCallbackToken then
-		-- The unload function passed to DoAPILoop is called
-		-- both when the API unloads, and when this plugin unloads
-		-- as a result, removing any hooks in the unload function is no longer
-		-- a "formality", but rather required
-		api.RemoveHook(prefabSystemState.ExportCallbackToken)
+	for _, token in ipairs(prefabSystemState.Hooks) do
+		api.RemoveHook(token)
+	end
+	for i, extName, extAuth, extDereg, extToken in extHookIter(prefabSystemState.ExtHooks) do
+		local ext = api.GetAPIExtension(extName, extAuth)
+		if ext == nil then continue end
+		if ext[extDereg] == nil then continue end
+		ext[extDereg](extToken)
+	end
+	for _, extToken in ipairs(prefabSystemState.ApiExtensions) do
+		api.RemoveAPIExtension(extToken)
 	end
 end
 
@@ -232,7 +324,7 @@ function prefabSystem.UnpackPrefabTargets(mission: Folder, targetGroup: Folder)
 end
 
 function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabInstance: BasePart, staticState, globalState)
-	local warn = warnLogger.new("InstantiatePrefab", `Prefab {prefab.Name}`)
+	local warn = warn.specialize("InstantiatePrefab", `Prefab {prefab.Name}`)
 	
 	local instanceTargetGroup = prefab:FindFirstChild("Instance") or prefab:FindFirstChild("instance")
 	if not instanceTargetGroup then
@@ -255,12 +347,17 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 	local sFuncStructure = prefabSystem.CollectSpecFuncAttrs(prefab, instanceBase, SPECIAL_FUNCS)
 	prefabSystem.EvaluateSpecFuncs(prefab, prefabInstance, SPECIAL_FUNCS, sFuncStructure)
 	
-	local instanceSettings = instanceBase:GetAttributes()
+	local instanceSettings = {}
+	for k, v in pairs(instanceBase:GetAttributes()) do
+		instanceSettings[k:gsub("^noimp%.", "")] = v
+	end
+	
 	for settingName, instanceValue in pairs(prefabInstance:GetAttributes()) do
 		local warn = warn.specialize(`Ignoring invalid attribute {settingName}`)
 		
 		if settingName == "PrefabName" then continue end
 		
+		settingName = string.gsub(settingName, "^noimp%.", "")
 		local defaultValue = instanceSettings[settingName] 
 		
 		if type(defaultValue) == "string" then

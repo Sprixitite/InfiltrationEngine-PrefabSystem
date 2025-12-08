@@ -15,6 +15,27 @@ local GLUtCfg = {
 
 local patternSpecChars = { '(', ')', '.', '%', '+', '-', '*', '?', '[', ']', '^', '$' }
 
+GLUt.severity = {
+	SILENT = 0,
+	LOG = 1,
+	WARN = 2,
+	ERR = 3,
+	ERROR = 3
+}
+
+local function severity_warn(sev, ...)
+	if sev == GLUt.severity.SILENT then return end
+	local warn_fn
+	if sev == GLUt.severity.LOG then
+		warn_fn = GLUtCfg.print
+	elseif sev == GLUt.severity.WARN then
+		warn_fn = GLUtCfg.warn
+	else
+		warn_fn = GLUtCfg.error
+	end
+	warn_fn(...)
+end
+
 function GLUt.configure(tbl)
 	for k, v in pairs(tbl) do
 		if GLUtCfg[k] ~= nil then
@@ -25,12 +46,38 @@ function GLUt.configure(tbl)
 	end
 end
 
+function GLUt.custom_iter(tbl, keys)
+	local i = 0
+	return function()
+		i = i + 1
+		local requested = {}
+		local iTbl = tbl[i]
+		if iTbl == nil then return nil end
+		for ki, k in ipairs(keys) do
+			requested[ki] = iTbl[k]
+		end 
+		return i, unpack(requested)
+	end
+end
+
+function GLUt.custom_iter_template(...)
+	local varargs = { ... }
+	return function(tbl) return GLUt.custom_iter(tbl, varargs) end
+end
+
 function GLUt.default(arg, default)
 	return (arg == nil) and default or arg
 end
 
 function GLUt.default_exec(arg, fn)
 	return (arg == nil) and fn() or arg
+end
+
+function GLUt.default_bounds(arg, default, min, max)
+	if arg == nil then return default end
+	if arg < min then return default end
+	if max < arg then return default end
+	return arg
 end
 
 function GLUt.default_typed(arg, default, argName, funcName)
@@ -42,19 +89,19 @@ function GLUt.default_typed(arg, default, argName, funcName)
 	return default
 end
 
-function GLUt.type_warn(argName, funcName, expected, got, isErr)
+function GLUt.type_warn(argName, funcName, expected, got, severity)
 	if argName == nil or expected == got then return end
-	isErr = GLUt.default(isErr, false)
-	
-	local logFun = isErr and GLUtCfg.error or GLUtCfg.warn
+	if type(severity) == "boolean" then
+		severity = severity and GLUt.severity.ERROR or GLUt.severity.WARN 
+	end
+	severity = GLUt.default_bounds(severity, GLUt.severity.ERROR, GLUt.severity.SILENT, GLUt.severity.ERROR)
 
 	local warnStart = GLUt.type_is(funcName, "string") and (funcName .. ": expected arg \"") or "Expected arg \""
-	logFun(warnStart .. argName .. "\" of type \"" .. expected .. "\" got type \"" .. got .. "\"!")
-	logFun("Traceback: " .. debug.traceback())
+	severity_warn(severity, warnStart .. argName .. "\" of type \"" .. expected .. "\" got type \"" .. got .. "\"!")
+	severity_warn(severity, "Traceback: " .. debug.traceback())
 end
 
-function GLUt.type_check(arg, expected, argName, funcName, isErr)
-	isErr = GLUt.default(isErr, false)
+function GLUt.type_check(arg, expected, argName, funcName, severity)
 	local argType = GLUtCfg.type(arg)
 
 	expected = string.gsub(expected, '?', "|nil")
@@ -62,7 +109,7 @@ function GLUt.type_check(arg, expected, argName, funcName, isErr)
 		if validType == argType then return true end
 	end
 
-	GLUt.type_warn(argName, funcName, expected, argType, isErr)
+	GLUt.type_warn(argName, funcName, expected, argType, severity)
 
 	return false
 end
@@ -131,6 +178,21 @@ function GLUt.str_chariter(str)
 	end
 end
 
+function GLUt.str_trim(str, pattern)
+	pattern = GLUt.default(pattern, "%s")
+	return GLUt.str_trimend(GLUt.str_trimstart(str, pattern), pattern)
+end
+
+function GLUt.str_trimstart(str, pattern)
+	pattern = GLUt.default(pattern, "%s")
+	return string.gsub(str, '^' .. pattern, "")
+end
+
+function GLUt.str_trimend(str, pattern)
+	pattern = GLUt.default(pattern, "%s")
+	return string.gsub(str, pattern .. '$', "")
+end
+
 function GLUt.str_getchar(str, i)
 	return string.sub(str, i, i)
 end
@@ -183,20 +245,20 @@ end
 
 function GLUt.tbl_deepget(tbl, create_missing, ...)
 	local indexing = tbl
-	for _, k in GLUt.vararg_iter(...) do
+	for i, k, n in GLUt.vararg_iter(...) do
 		k = tostring(k)
-		if GLUtCfg.type(indexing) ~= "table" then
-			return false, indexing
-		end
-		
+
 		if indexing[k] == nil and create_missing then
 			indexing[k] = {}
 		end
-		
+
 		indexing = indexing[k]
+		if GLUtCfg.type(indexing) ~= "table" and not (i == n) then
+			return false, indexing, k
+		end
 	end
-	
-	return GLUt.type_is(indexing, "table"), indexing
+
+	return true, indexing
 end
 
 function GLUt.tbl_getkeys(tbl)
@@ -307,7 +369,7 @@ local function tbl_argextract(fname, t, arglayout)
 	local canName = arglayout[4]
 	local default = arglayout.Default or arglayout.default
 	local vital = GLUt.default(arglayout.Vital or arglayout.vital, false)
-	
+
 	local tVal = t[index]
 	if canName and tVal ~= nil then
 		if t[name] ~= nil then
@@ -316,18 +378,18 @@ local function tbl_argextract(fname, t, arglayout)
 	elseif canName then
 		tVal = t[name]
 	end
-	
+
 	if tVal == nil and default ~= nil then
 		tVal = default
 	end
-	
+
 	if tVal == nil and expectedType == false then
 		return nil
 	elseif tVal == nil and not GLUt.str_has_match(expectedType, "%?") then
 		local argType = vital and "Vital Arg" or "Arg"
 		return GLUtCfg.error(fname .. "@tblcall : " .. tbl_arginfo(argType, name, index, expectedType) .. " not passed!")
 	end
-	
+
 	if expectedType == false then return tVal end
 	if not GLUt.type_check(tVal, expectedType, name, fname, true) then return nil end
 	return tVal

@@ -92,6 +92,28 @@ luaExprFuncs.unpackToState = ExprFunc(
 	{ 17, "state#16", "string?", false, default=nil }
 )
 
+luaExprFuncs.staticGroupToLocalArray = ExprFunc(
+	"staticGroupToLocalArray",
+	function(inst, state, staticState, groupName, elementPrefix, stateScriptAccess)
+		local groupPath = glut.str_split(groupName, '.')
+		local success, groupTbl = glut.tbl_deepget(state, unpack(groupPath))
+		if not success then StaticGroupErr(groupName) end
+		inst:SetAttribute(elementPrefix .. "Count", #groupTbl)
+		local statescriptAccessor = "INIT #StateScriptAccessLocalArrayTemp 0"
+		for i, v in ipairs(groupTbl) do
+			statescriptAccessor = statescriptAccessor .. "\n SET #StateScriptAccessLocalArrayTemp #" .. elementPrefix .. tostring(i) 
+			inst:SetAttribute(elementPrefix .. tostring(i), v)
+		end
+		if stateScriptAccess ~= "NO!" then
+			inst:SetAttribute(stateScriptAccess, statescriptAccessor)
+		end
+		return true
+	end,
+	{ 1, "groupName", "string", false, vital=true },
+	{ 2, "elementPrefix", "string", false, vital=true },
+	{ 3, "stateScriptAccess", "string", true, default="NO!" }
+)
+
 luaExprFuncs.importStaticGroup = ExprFunc(
 	"importStaticGroup",
 	function(inst, state, staticState, groupName, importLocation, allowDuplicates)
@@ -114,7 +136,6 @@ luaExprFuncs.importStaticGroup = ExprFunc(
 			groupTbl = noDupes
 		end
 		importTbl[importKey] = groupTbl
-		print(state, importTbl)
 		return true
 	end,
 	{ 1, "groupName", "string", false, vital=true },
@@ -150,19 +171,22 @@ luaExprFuncs.staticGroupCombine = ExprFunc(
 		suffix,
 		field,
 		itemPrefix,
-		itemSuffix
+		itemSuffix,
+		autoBrackets
 	)
 		-- Concatenates the string representation of all members of a staticState group, using the specified operator inbetween all elements
 		local groupPath = glut.str_split(groupName, '.')
 		local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
 		if not success then StaticGroupErr(groupName) end
-		local str = prefix .. "("
+		local openBracket = autoBrackets and "(" or ""
+		local closeBracket = autoBrackets and ")" or ""
+		local str = prefix .. openBracket
 		for i, v in ipairs(groupTbl) do
 			if i ~= 1 then str = str .. combineOp end
 			local vStr = (field == nil) and tostring(v) or tostring(v[field])
 			str = str .. itemPrefix .. vStr .. itemSuffix
 		end
-		str = str .. ")" .. suffix
+		str = str .. closeBracket .. suffix
 		return str
 	end,
 	{ 1, "groupName", "string", false, vital=true },
@@ -171,7 +195,8 @@ luaExprFuncs.staticGroupCombine = ExprFunc(
 	{ 4, "suffix", "string", true, default="" },
 	{ 5, "field", false, true, default=nil },
 	{ 6, "itemPrefix", "string", true, default="" },
-	{ 7, "itemSuffix", "string", true, default="" }
+	{ 7, "itemSuffix", "string", true, default="" },
+	{ 8, "autoBrackets", "boolean", true, default=true }
 )
 
 luaExprFuncs.staticGroupEmpty = ExprFunc(

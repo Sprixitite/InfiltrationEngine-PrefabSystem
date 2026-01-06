@@ -1,4 +1,4 @@
-local glut = require("./GLUt")
+local glut = require("./Lib/GLUt")
 
 local luaExprFuncs = {}
 
@@ -10,22 +10,77 @@ local function returnArgs(...) return ... end
 
 local function ExprFunc(fname, f, ...)
 	local tblCallable = glut.fun_tblcallable(fname, returnArgs, ...)
-	return function(inst, state, staticState, t)
-		return f(inst, state, staticState, tblCallable(t))
+	return function(inst, attr, state, staticState, t)
+		return f(inst, attr, state, staticState, tblCallable(t))
 	end
 end
 
 local function ExprFuncOverload(fname, f, foverloading, ...)
 	local tblCallable = glut.fun_tblcallable(fname, returnArgs, ...)
-	return function(inst, state, staticState, t)
-		local overloaded = function() return foverloading(inst, state, staticState, t) end
-		return f(inst, state, staticState, overloaded, tblCallable(t))
+	return function(inst, attr, state, staticState, t)
+		local overloaded = function() return foverloading(inst, attr, state, staticState, t) end
+		return f(inst, attr, state, staticState, overloaded, tblCallable(t))
 	end
 end
 
+luaExprFuncs.Once = ExprFunc(
+	"Once",
+	function(inst, attr, state, staticState, ret, condition)
+		state._Once = state._Once or {}
+		if condition and not state._Once[attr] then
+			state._Once[attr] = true
+			return ret
+		end
+		return false
+	end,
+	{ 1, "ret", false, false, default=false },
+	{ 2, "condition", "boolean", true, default=true }
+)
+
+luaExprFuncs.tostring = ExprFunc(
+	"tostring",
+	function(inst, attr, state, staticState, value)
+		return tostring(value)
+	end,
+	{ 1, "value", false, false, vital=true }
+)
+
+luaExprFuncs.tonumber = ExprFunc(
+	"tonumber",
+	function(inst, attr, state, staticState, str)
+		return tonumber(str)
+	end,
+	{ 1, "str", "string", false, vital=true }
+)
+
+luaExprFuncs.strsan = ExprFunc(
+	"strsan",
+	function(inst, attr, state, staticState, str)
+		-- Sanitize a string for use as a global variable name
+		if string.sub(str, 1, 1):match("^%d") then
+			str = '_' .. str
+		end
+		return str:gsub("[^%w]", "_")
+	end,
+	{ 1, "str", "string", false, vital=true }
+)
+
+luaExprFuncs.stror = ExprFunc(
+	"stror",
+	function(inst, attr, state, staticState, condition, str1, str2)
+		-- Selects one of two strings depending on the state of a condition variable
+		-- Outputs str1 when condition == false
+		-- Otherwise outputs str2
+		return condition and str2 or str1
+	end,
+	{ 1, "condition", "boolean", false, vital=true },
+	{ 2, "str1", "string", false, vital=true },
+	{ 3, "str2", "string", false, vital=true }
+)
+
 luaExprFuncs.setAttributes = ExprFunc(
 	"setAttributes",
-	function(inst, state, staticState, attrs)
+	function(inst, attr, state, staticState, attrs)
 		for k, v in pairs(attrs) do
 			inst:SetAttribute(k, v)
 		end
@@ -36,20 +91,21 @@ luaExprFuncs.setAttributes = ExprFunc(
 
 luaExprFuncs.setStateValue = ExprFunc(
 	"setStateValues",
-	function(inst, state, staticState, name, value)
-		if state[name] ~= nil then
+	function(inst, attr, state, staticState, name, value, override)
+		if state[name] ~= nil and not override then
 			error("Attempt to set already-existing StateValue \"" .. name .. "\"!")
-		end 
+		end
 		state[name] = value
 		return true
 	end,
 	{ 1, "name", "string", false, vital=true },
-	{ 2, "value", false, false, vital=true }
+	{ 2, "value", false, false, vital=true },
+	{ 3, "override", "boolean", true, default=false }
 )
 
 luaExprFuncs.stringSplit = ExprFunc(
 	"stringSplit",
-	function(inst, state, staticState, value, separator)
+	function(inst, attr, state, staticState, value, separator)
 		return glut.str_split(value, separator)
 	end,
 	{ 1, "value", "string", false, vital=true },
@@ -58,7 +114,7 @@ luaExprFuncs.stringSplit = ExprFunc(
 
 luaExprFuncs.unpackToState = ExprFunc(
 	"unpackToState",
-	function(inst, state, staticState, unpacking, ...)
+	function(inst, attr, state, staticState, unpacking, ...)
 		local locTbl = { ... }
 		for i, v in ipairs(unpacking) do
 			local locPath = locTbl[i]
@@ -94,7 +150,7 @@ luaExprFuncs.unpackToState = ExprFunc(
 
 luaExprFuncs.staticGroupToLocalArray = ExprFunc(
 	"staticGroupToLocalArray",
-	function(inst, state, staticState, groupName, elementPrefix, stateScriptAccess)
+	function(inst, attr, state, staticState, groupName, elementPrefix, stateScriptAccess)
 		local groupPath = glut.str_split(groupName, '.')
 		local success, groupTbl = glut.tbl_deepget(state, unpack(groupPath))
 		if not success then StaticGroupErr(groupName) end
@@ -116,7 +172,7 @@ luaExprFuncs.staticGroupToLocalArray = ExprFunc(
 
 luaExprFuncs.importStaticGroup = ExprFunc(
 	"importStaticGroup",
-	function(inst, state, staticState, groupName, importLocation, allowDuplicates)
+	function(inst, attr, state, staticState, groupName, importLocation, allowDuplicates)
 		local importPath = glut.str_split(importLocation, '.')
 		local importKey = table.remove(importPath)
 		local success, importTbl = glut.tbl_deepget(state, true, unpack(importPath))
@@ -145,7 +201,7 @@ luaExprFuncs.importStaticGroup = ExprFunc(
 
 luaExprFuncs.staticGroupExport = ExprFunc(
 	"staticGroupExport",
-	function(inst, state, staticState, groupName, exportValue, allowDuplicates)
+	function(inst, attr, state, staticState, groupName, exportValue, allowDuplicates)
 		-- Exports a variable as a member of a staticState group, creating the group if it does not exist
 		local groupPath = glut.str_split(groupName, '.')
 		local success, groupTbl = glut.tbl_deepget(staticState, true, unpack(groupPath))
@@ -164,7 +220,7 @@ luaExprFuncs.staticGroupExport = ExprFunc(
 luaExprFuncs.staticGroupCombine = ExprFunc(
 	"staticGroupCombine",
 	function(
-		inst, state, staticState,
+		inst, attr, state, staticState,
 		groupName,
 		combineOp,
 		prefix,
@@ -201,9 +257,9 @@ luaExprFuncs.staticGroupCombine = ExprFunc(
 
 luaExprFuncs.staticGroupEmpty = ExprFunc(
 	"staticGroupEmpty",
-	function(inst, state, staticState, groupName, quietFail)
+	function(inst, attr, state, staticState, groupName, quietFail)
 		-- Returns true if the StaticStateGroup at the given path is empty
-		return luaExprFuncs.staticGroupSize(inst, state, staticState, { groupName, quietFail=quietFail }) == 0
+		return luaExprFuncs.staticGroupSize(inst, attr, state, staticState, { groupName, quietFail=quietFail }) == 0
 	end,
 	{ 1, "groupName", "string", false, vital=true },
 	{ 2, "quietFail", "boolean", true, default=false }
@@ -211,7 +267,7 @@ luaExprFuncs.staticGroupEmpty = ExprFunc(
 
 luaExprFuncs.staticGroupSize = ExprFunc( 
 	"staticGroupSize",
-	function(inst, state, staticState, groupName, asString, quietFail)
+	function(inst, attr, state, staticState, groupName, asString, quietFail)
 		-- Returns the size of the StaticStateGroup at the given path - optionally as a string
 		local groupPath = glut.str_split(groupName, '.')
 		local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
@@ -230,7 +286,7 @@ luaExprFuncs.staticGroupSize = ExprFunc(
 luaExprFuncs.moveFirstStaticElement = ExprFunc(
 	"moveFirstStaticElement",
 	function(
-		inst, state, staticState,
+		inst, attr, state, staticState,
 		groupName,
 		destName,
 		pairItem,
@@ -267,7 +323,7 @@ luaExprFuncs.moveFirstStaticElement = ExprFunc(
 
 luaExprFuncs.getStaticVariable = ExprFunc( 
 	"getStaticVariable",
-	function(inst, state, staticState, varName)
+	function(inst, attr, state, staticState, varName)
 		local varPath = glut.str_split(varName, '.')
 		local varKey = table.remove(varPath, #varPath)
 		local success, varTbl = glut.tbl_deepget(staticState, false, unpack(varPath))
@@ -279,7 +335,7 @@ luaExprFuncs.getStaticVariable = ExprFunc(
 
 luaExprFuncs.fallbackIfUnset = ExprFunc(
 	"fallbackIfUnset",
-	function(inst, state, staticState, maybeUnset, fallback)
+	function(inst, attr, state, staticState, maybeUnset, fallback)
 		-- Returns the second argument if the first contains the substring "UNSET" (case-sensitive)
 		if maybeUnset == nil then return fallback end
 		if type(maybeUnset) ~= "string" then return maybeUnset end
@@ -294,23 +350,23 @@ luaExprFuncs.fallbackIfUnset = ExprFunc(
 -- Convenience if you forget the name
 luaExprFuncs.fallbackIfDefault = ExprFuncOverload(
 	"fallbackIfDefault",
-	function(inst, state, staticState, overload, maybeUnset, fallback)
+	function(inst, attr, state, staticState, overload, maybeUnset, fallback)
 		return overload()
 	end,
 	{ 1, "maybeUnset", false, false, default=nil },
 	{ 2, "fallback", false, false, default=nil }
 )
 
-luaExprFuncs.CreateExprFenv = function(inst, instState, staticState, globalState)
+luaExprFuncs.CreateExprFenv = function(inst, attrName, instState, staticState, globalState)
 	return setmetatable(
 		{},
 		{
 			__index = function(t, k)
 				if instState[k] ~= nil then return instState[k] end
 				if k == "Global" or k == "Globals" then return globalState end
-				if luaExprFuncs[k] == nil then return nil end
+				if luaExprFuncs[k] == nil then error(`Attempt to index state with {k}, found nil`) end
 				return function(t)
-					return luaExprFuncs[k](inst, instState, staticState, t)
+					return luaExprFuncs[k](inst, attrName, instState, staticState, t)
 				end
 			end,
 		}

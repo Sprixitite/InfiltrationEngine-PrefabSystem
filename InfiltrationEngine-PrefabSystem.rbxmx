@@ -1,7 +1,7 @@
 <roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
 	<External>null</External>
 	<External>nil</External>
-	<Item class="Folder" referent="RBX521574CD24904C15932958493CB81BA5">
+	<Item class="Folder" referent="RBX193060074577467AA861FD8FEEB9B4A9">
 		<Properties>
 			<BinaryString name="AttributesSerialize"></BinaryString>
 			<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -10,24 +10,38 @@
 			<int64 name="SourceAssetId">-1</int64>
 			<BinaryString name="Tags"></BinaryString>
 		</Properties>
-		<Item class="Script" referent="RBXBE4F87B58EBE410CB2284491575251B8">
+		<Item class="Script" referent="RBX88B1D3EDA6DF4F67951D427B7C63F987">
 			<Properties>
-				<ProtectedString name="Source"><![CDATA[local warnLogger = require(script.Parent.Slogger).init{
+				<ProtectedString name="Source"><![CDATA[local PREFABSYS_DEBUG_MODE = false
+
+local warnLogger = require("./Lib/Slogger").init{
 	postInit = table.freeze,
 	logFunc = warn
 }
 
 local warn = warnLogger.new("PrefabSystem")
 
-local glut = require(script.Parent.GLUt)
+local debbieDebug = require("./Lib/DebbieDebug")
+debbieDebug.init(function()
+    return PREFABSYS_DEBUG_MODE or workspace:GetAttribute("PrefabSys_Debug") == true
+end)
+
+local glut = require("./Lib/GLUt")
 glut.configure{ warn = warn }
 
-local apiConsumer = require(script.Parent.APIConsumer)
+local apiConsumer = require("./Lib/APIConsumer")
 
-local luaExpr = require(script.Parent.LuaExpr)
-local luaExprFuncs = require(script.Parent.LuaExprFuncs)
-local shebangFuncs = require(script.Parent.ShebangFuncs)
-local exprRules = luaExpr.MakeEvalRules("%$%(", "%)")
+local luaExpr = require("./Lib/LuaExpr")
+local luaExprFuncs = require("./LuaExprFuncs")
+local shebangFuncs = require("./ShebangFuncs")
+
+local attrEval = require("./AttributeEval/Main")
+local sFuncEval = require("./SFuncEval/Main")
+
+local PrefabScope  = require("./PrefabScope")
+local PrefabTarget = require("./PrefabTarget")
+
+local exprRules = luaExpr.NewEvalRules("%$%(", "%)")
 
 type APIReference = apiConsumer.APIReference
 
@@ -35,67 +49,6 @@ local hookName = nil
 local API_ID = "InfiltrationEngine-PrefabSystem"
 
 local prefabSystem = {}
-
-local function CheckArgCountRange(fname, expectedMin, expectedMax, ...)
-	local argCount = select('#', ...)
-	if argCount < expectedMin or argCount > expectedMax then
-		local expected = (expectedMin == expectedMax) and expectedMin-2 or `{expectedMin-2}-{expectedMax-2}`
-		error(`{fname} expects {expected} arguments, but got {argCount}!`)
-	end
-end
-
-local function CheckArgCount(fname, expected, ...) CheckArgCountRange(fname, expected, expected, ...) end
-
-local PREFAB_IDS = {}
-local ELEMENT_IDS = {}
-
-local function GetId(tbl, inst)
-	local existing = tbl[inst]
-	if existing ~= nil then return existing end
-	
-	local max = tbl.Total or 0
-	tbl[inst] = max
-	tbl.Total = max + 1
-	return max
-end
-
-local function strKeySub(str, key, value)
-	key = tostring(key)
-	value = tostring(value)
-	return string.gsub(str, "([^{]){" .. key .. "}([^}])", function(d1, d2)
-		return d1 .. value .. d2
-	end)
-end
-
-local SPECIAL_FUNCS = {
-	this_prop = function(prefab, element, property, ...)
-		CheckArgCount("SpecFunc.this", 3, prefab, element, property, ...)
-		return element[property]
-	end,
-	child_prop = function(prefab, element, child, property, ...)
-		CheckArgCount("SpecFunc.child", 4, prefab, element, child, property, ...)
-		return element:FindFirstChild(child)[property]
-	end,
-	this_attr = function(prefab, element, attrname, ...)
-		CheckArgCount("SpecFunc.this_attr", 3, prefab, element, attrname, ...)
-		return element:GetAttribute(attrname)
-	end,
-	child_attr = function(prefab, element, child, attrname, ...)
-		CheckArgCount("SpecFunc.child_attr", 4, prefab, element, child, attrname, ...)
-		return element:FindFirstChild(child):GetAttribute(attrname)
-	end,
-	str_varsub = function(prefab, element, str, ...)
-		CheckArgCount("SpecFunc.str_id_sub", 3, prefab, element, str, ...)
-		local temp = ` {str} `
-		temp = strKeySub(temp, "pid", GetId(PREFAB_IDS, prefab))
-		temp = strKeySub(temp, "eid", GetId(ELEMENT_IDS, element))
-		temp = strKeySub(temp, "pname", prefab.Name)
-		temp = strKeySub(temp, "ename", element.Name)
-		temp = strKeySub(temp, "rand", math.random(0, 9999))
-		temp = temp:gsub("{{", "{"):gsub("}}", "}"):sub(2, -2)
-		return temp
-	end,
-}
 
 function prefabSystem.OnAPILoaded(api: APIReference, prefabSystemState)
 	prefabSystemState.Hooks = prefabSystemState.Hooks or {}
@@ -163,6 +116,8 @@ end
 
 function prefabSystem.OnAPIExtensionLoaded(prefabSystemState, _, name, author, contents)
 	if author ~= "Sprix" or name ~= "AttributeImporter" then return end
+	
+	-- Register ourselves with the Attribute Importer if available
 	prefabSystemState.ExtHooks[1] = {
 		Name = "AttributeImporter",
 		Auth = "Sprix",
@@ -191,6 +146,10 @@ end
 
 function prefabSystem.OnAPIUnloaded(api: APIReference, prefabSystemState)
 	for _, token in ipairs(prefabSystemState.Hooks) do
+		if token == nil then
+			warn(`Attempt to de-register nil hook?`)
+			continue
+		end
 		api.RemoveHook(token)
 	end
 	for i, extName, extAuth, extDereg, extToken in extHookIter(prefabSystemState.ExtHooks) do
@@ -200,6 +159,9 @@ function prefabSystem.OnAPIUnloaded(api: APIReference, prefabSystemState)
 		ext[extDereg](extToken)
 	end
 	for _, extToken in ipairs(prefabSystemState.ApiExtensions) do
+		if extToken == nil then
+			warn(`Attempt to de-register nil API Extension?`)
+		end
 		api.RemoveAPIExtension(extToken)
 	end
 end
@@ -275,12 +237,7 @@ function prefabSystem.OnSerializerExport(hookState: {any}, invokeState, mission:
 
 		local prefabStatic = staticStates[prefab] or {}
 		prefabSystem.UnpackPrefab(mission, prefab, "Static", function(mission, prefabTargetGroup)
-			prefabSystem.DeepAttributeEvaluator(
-				prefab,
-				prefabTargetGroup,
-				prefabSystem.InterpolateValue,
-				{ Instance = prefabStatic, Static = prefabStatic, Global = globalState }
-			)
+			attrEval.EvaluateAllRecurse(prefabTargetGroup, { Instance = prefabStatic, Static = prefabStatic, Global = globalState })
 		end)
 		
 	end
@@ -292,61 +249,25 @@ end
 
 function prefabSystem.UnpackPrefab(mission: Folder, prefab: Folder, scope: string, preUnpack)
 	preUnpack = glut.default(preUnpack, function() end)
-	for _, prefabTargetGroup in ipairs(prefab:GetChildren()) do
-		if not prefabTargetGroup:IsA("Folder") then
-			warn(`PrefabTargetGroup {prefabTargetGroup.Name} is invalid - expected Folder, got {prefabTargetGroup.ClassName}. Skipping.`)
-			continue
-		end
-		
-		if not prefabTargetGroup.Name:lower():find(`^{scope:lower()}`) then continue end
-		local modifiedTargets = preUnpack(mission, prefabTargetGroup) or {prefabTargetGroup}
-		for _, modifiedTarget in ipairs(modifiedTargets) do
-			prefabSystem.UnpackPrefabTargets(mission, modifiedTarget)
-		end
-	end
-end
-
-function prefabSystem.UnpackPrefabTargets(mission: Folder, targetGroup: Folder)
-	local warn = warnLogger.new("UnpackPrefabTarget", "Prefab Target Invalid")
 	
-	for _, prefabTarget in ipairs(targetGroup:GetChildren()) do
-		if prefabTarget.Name == "InstanceBase" then continue end
-		
-		if prefabTarget:IsA("ValueBase") then
-			continue
-		end
-		
-		if not prefabTarget:IsA("Folder") then
-			warn(`Expected Folder, got {prefabTarget.ClassName}`, "Target will be ignored")
-			continue
-		end
-
-		local missionPrefabTarget = mission:FindFirstChild(prefabTarget.Name) 
-		if missionPrefabTarget == nil then warn(`Destination {prefabTarget.Name} not present`, "Create it if needed") continue end
-		for _, prefabTargetItem in ipairs(prefabTarget:GetChildren()) do
-			local itemIsFolder = prefabTargetItem:IsA("Folder")
-			local missionFolder = missionPrefabTarget:FindFirstChild(prefabTargetItem.Name)
-			if itemIsFolder and missionFolder ~= nil then
-				for _, child in ipairs(prefabTargetItem:GetChildren()) do
-					child:Clone().Parent = missionFolder
-				end
-				continue
-			end
-			prefabTargetItem:Clone().Parent = missionPrefabTarget 
-		end
+	local scopeFolder = PrefabScope.GetScopeOfType(prefab, scope)
+	if scopeFolder == nil then return end
+	local modifiedScopes = preUnpack(mission, scopeFolder) or {scopeFolder}
+	for _, modifiedScope in ipairs(modifiedScopes) do
+		PrefabScope.UnpackToMission(modifiedScope, mission)
 	end
 end
 
 function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabInstance: BasePart, staticState, globalState)
 	local warn = warn.specialize("InstantiatePrefab", `Prefab {prefab.Name}`)
 	
-	local instanceTargetGroup = prefab:FindFirstChild("Instance") or prefab:FindFirstChild("instance")
-	if not instanceTargetGroup then
+	local instanceScope = PrefabScope.GetScopeOfType(prefab, "Instance")
+	if not instanceScope then
 		warn("Prefab may not be instantiated!")
 		return
 	end
 	
-	local instanceData = instanceTargetGroup:Clone()
+	local instanceData = instanceScope:Clone()
 	local instanceBase = instanceData:FindFirstChild("InstanceBase")
 	if not instanceBase then
 		warn("Instance folder found but no InstanceBase part present!")
@@ -358,13 +279,18 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 		return
 	end
 	
-	local sFuncStructure = prefabSystem.CollectSpecFuncAttrs(prefab, instanceBase, SPECIAL_FUNCS)
-	prefabSystem.EvaluateSpecFuncs(prefab, prefabInstance, SPECIAL_FUNCS, sFuncStructure)
+	local sFuncTree = sFuncEval.DeriveSFuncTree(instanceBase)
+	sFuncEval.RunSFuncTree(sFuncTree, prefab, prefabInstance)
 	
 	local instanceSettings = {}
 	for k, v in pairs(instanceBase:GetAttributes()) do
 		if glut.str_has_match(k, "^imponly%.") then continue end
-		instanceSettings[k:gsub("^noimp%.", "")] = v
+		local kBase = k:gsub("^noimp%.", "")
+		if instanceSettings[kBase] ~= nil then
+			warn(`Attribute {kBase} is defined multiple times, conflicting with {k}`)
+			warn(`Delete {kBase} or replace with imponly.{kBase} to silence!`)
+		end
+		instanceSettings[kBase] = v
 	end
 	
 	for settingName, instanceValue in pairs(prefabInstance:GetAttributes()) do
@@ -376,7 +302,7 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 		local defaultValue = instanceSettings[settingName] 
 		
 		if type(defaultValue) == "string" then
-			local isSFunc = prefabSystem.StrIsSpecFunc(defaultValue)
+			local isSFunc = sFuncEval.IsSFunc(defaultValue)
 			if isSFunc then instanceSettings[settingName] = instanceValue continue end
 		end
 		
@@ -393,13 +319,9 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 		instanceSettings[settingName] = instanceValue
 	end
 	
-	local cfrSet = prefabSystem.DeepAttributeEvaluator(
-		prefab,
-		instanceData,
-		prefabSystem.InterpolateValue,
-		{ Instance = instanceSettings, Static = staticState, Global = globalState },
-		{ "this.CFrame" }
-	)["this.CFrame"] or {}
+	local evalState = { Instance = instanceSettings, Static = staticState, Global = globalState }
+	local cfrSet = attrEval.EvaluateAllRecurse(instanceData, evalState, { "this.CFrame" })["this.CFrame"] or {}
+	
 	staticState.Attrs = staticState.Attrs or {}
 	staticState.Attr = staticState.Attrs
 	local staticAttrs = staticState.Attrs
@@ -417,319 +339,39 @@ function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabI
 		prefabElement.CFrame = prefabInstance.CFrame:ToWorldSpace(baseToElement)
 	end
 	
-	prefabSystem.UnpackPrefabTargets(mission, instanceData)
-end
-
-function prefabSystem.GetSortedAttributeList(instance)
-	local instanceAttrs = instance:GetAttributes()
-	local instanceAttrNames = {}
-	for k, _ in pairs(instanceAttrs) do table.insert(instanceAttrNames, k) end
+	PrefabScope.UnpackToMission(instanceData, mission)
 	
-	table.sort(instanceAttrNames, function(a, b)
-		local aIsHighP = string.match(a, "^highp%.") ~= nil
-		local bIsHighP = string.match(b, "^highp%.") ~= nil
-		local aIsLowP = string.match(a, "^lowp%.") ~= nil
-		local bIsLowP = string.match(b, "^lowp%.") ~= nil
-		
-		local aNumericP = string.match(a, "^(%d+)%.")
-		local bNumericP = string.match(b, "^(%d+)%.")
-		local aIsNumericP = aNumericP ~= nil
-		local bIsNumericP = bNumericP ~= nil
-		
-		if aIsNumericP and bIsNumericP then
-			return tonumber(aNumericP) < tonumber(bNumericP)
-		elseif aIsNumericP then
-			return true
-		elseif bIsNumericP then
-			return false
-		end
-		
-		if aIsHighP and not bIsHighP then
-			return true
-		elseif bIsHighP and not aIsHighP then
-			return false
-		elseif aIsLowP and not bIsLowP then
-			return false
-		elseif bIsLowP and not aIsLowP then
-			return true
-		else
-			return a < b
-		end
-	end)
+	local remoteTargetGroup = PrefabScope.GetScopeOfType(prefab, "Remote")
+	if not remoteTargetGroup then return end
 	
-	return instanceAttrNames
-end
-
-function prefabSystem.IsProgrammable(inst)
-	for n, _ in pairs(inst:GetAttributes()) do
-		if glut.str_has_match(n, "ProgrammableDone$") then return true end
-	end
-	return false
-end
-
-function prefabSystem.DeepAttributeEvaluator(prefab: Folder, root: Instance, evaluator, evalData, attrCapture, programmableRecurse)
-	attrCapture = glut.default(attrCapture, {})
-	programmableRecurse = glut.default(programmableRecurse, false)
-	local warn = warnLogger.new("Attribute Evaluation", `{root.Parent}.{root}`)
-	
-	if prefabSystem.IsProgrammable(root) and not programmableRecurse then
-		local evalLimit = root:GetAttribute("ignore.ProgrammableEvalLimit")
-		if type(evalLimit) ~= "number" then evalLimit = 2000 end
-		
-		local attrCapture = glut.tbl_clone(attrCapture)
-		local allCaptured = {}
-		if not table.find(attrCapture, "ignore.ProgrammableDone") then table.insert(attrCapture, "ignore.ProgrammableDone") end
-		local i = 0
-		repeat
-			i = i + 1
-			local rootClone = root:Clone()
-			rootClone.Parent = root.Parent
-			local setQuery = prefabSystem.DeepAttributeEvaluator(
-				prefab,
-				rootClone,
-				evaluator,
-				evalData,
-				attrCapture,
-				true
-			)
-			local doneSet = setQuery["ignore.ProgrammableDone"][rootClone]
-			if doneSet then rootClone:Destroy() end
-			allCaptured = glut.tbl_merge(allCaptured, setQuery)
-		until doneSet or i >= evalLimit
-		if i >= evalLimit then
-			warn(
-				`Error evaluating programmable instance - did not finish after {evalLimit} evaluations`,
-				"If intentional - this limit may be altered by setting \"ignore.ProgrammableEvalLimit\" to a number of your choosing"
-			)
-		end
-		root:Destroy()
-		return allCaptured
-	end
-	
-	local setQuery = {}
-	for _, attrName in ipairs(prefabSystem.GetSortedAttributeList(root)) do
-		local attrValue = root:GetAttribute(attrName)
-		if type(attrValue) ~= "string" then continue end
-		local success, interpolatedAttrValue = evaluator(prefab, root, attrName, attrValue, evalData)
-		if not success then
-			warn(interpolatedAttrValue, "Attribute will be ignored")
-			root:SetAttribute(attrName, nil)
-			continue
-		end
-		
-		local pName = attrName:match("^highp%.(.+)$") or attrName:match("^lowp%.(.+)$") or attrName:match("^%d+%.(.+)$")
-		if pName ~= nil then
-			root:SetAttribute(attrName, nil)
-			attrName = pName
-		end
-		
-		for _, querying in ipairs(attrCapture) do
-			if attrName == querying then
-				setQuery[querying] = setQuery[querying] or {}
-				setQuery[querying][root] = interpolatedAttrValue
+	for _, target in ipairs(remoteTargetGroup:GetChildren()) do
+		local remoteFuncs = {}
+		for _, v in ipairs(target:GetDescendants()) do
+			if v:IsA("Folder") then continue end
+			if not v:IsA("ValueBase") then
+				warn(`Instance {v} in {prefab}.{remoteTargetGroup}.{target} is invalid`, `Expected ValueBase|Folder, got {v.ClassName}`)
 			end
+			remoteFuncs[#remoteFuncs+1] = v
 		end
 		
-		local ignoreName = attrName:match("^ignore%.([_%w]+)$")
-		if ignoreName ~= nil then
-			root:SetAttribute(attrName, nil)
-			continue
-		end
-		
-		local propName = attrName:match("^this%.([_%w]+)$")
-		if propName ~= nil then
-			local success, reason = pcall(function()
-				if typeof(root[propName]) == "EnumItem" then
-					interpolatedAttrValue = root[propName].EnumType:FromName(interpolatedAttrValue)
-				end
-				root[propName] = interpolatedAttrValue
-			end)
-			if not success then
-				warn(`Failed to set Property {propName}`, reason) 
+		local missionTarget = PrefabTarget.ToMissionTarget(target, mission)
+		if missionTarget == nil then continue end
+		for _, missionTargetItem in ipairs(missionTarget:GetDescendants()) do
+			if not missionTargetItem:IsA("BasePart") then continue end
+			if not prefabSystem.PointInPartBounds(instanceBase, missionTargetItem.Position) then continue end
+			
+			for _, remoteFunc in ipairs(remoteFuncs) do
+				
 			end
-			root:SetAttribute(attrName, nil)
-			continue
-		end
-		
-		root:SetAttribute(attrName, interpolatedAttrValue)
-	end
-	
-	local success, interpolatedName = evaluator(prefab, root, `{root}.Name`, root.Name, evalData)
-	if success and type(interpolatedName) == "string" then
-		root.Name = interpolatedName
-	elseif success then
-		warn("Name evaluation resolved to a non-string value")
-	end
-	
-	for _, child in ipairs(root:GetChildren()) do
-		local childSet = prefabSystem.DeepAttributeEvaluator(prefab, child, evaluator, evalData, attrCapture, programmableRecurse)
-		for attrName, hit in pairs(childSet) do
-			setQuery[attrName] = setQuery[attrName] or {}
-			local subTbl = setQuery[attrName]
-			for inst, val in pairs(hit) do
-				subTbl[inst] = val
-			end
+			
 		end
 	end
 	
-	return setQuery
 end
 
-function prefabSystem.InterpolateValue(prefab: Folder, element: Instance, name: string, value: string, state: { [string] : any }) : any
-	local exprName = `{element.Parent}.{element}:{name}`
-	local warn = warnLogger.new("Attribute Interpolation", exprName)
-	
-	local instState = state.Instance
-	local staticState = state.Static
-	local globalState = state.Global
-	
-	local shebangContents = string.match(value, "^#!/lua%s+(.*)$")
-	if shebangContents ~= nil then
-		local warn = warn.specialize("ShebangScriptExec")
-		local success, count, args = glut.str_runlua(
-			shebangContents,
-			shebangFuncs.CreateShebangFenv(element, instState, staticState, globalState),
-			exprName
-		)
-		
-		if not success then
-			return success, count
-		end
-		
-		if count > 1 then
-			warn(`Script execution succeeded, but {count-1} extra values were returned`, "Extra values will be ignored")
-		elseif count == 0 then
-			warn("Script execution succeeded, but no value was returned", "Attribute will be ignored")
-			return false, nil
-		end
-		return success, args[1]
-	end
-	
-	local success, evalResult = luaExpr.Eval(
-		value,
-		luaExprFuncs.CreateExprFenv(element, instState, staticState),
-		exprRules,
-		exprName,
-		false
-	)
-	
-	if not success then
-		if type(evalResult) == "string" then
-			warn(evalResult)
-		end
-		evalResult = nil
-	end
-
-	return success, evalResult
-end
-
-function prefabSystem.CollectSpecFuncAttrs(prefab, root, sfuncs)
-	local selfTbl = { Attributes = {}, Children = {} }
-	
-	for attrName, attrVal in pairs(root:GetAttributes()) do
-		if type(attrVal) ~= "string" then continue end
-		local success, sfuncData = prefabSystem.ParseSpecFunc(prefab, root, attrVal, sfuncs)
-		if not success then continue end
-		
-		selfTbl.Attributes[attrName] = sfuncData
-	end
-	
-	for _, baseElem in ipairs(root:GetChildren()) do
-		selfTbl.Children[baseElem.Name] = prefabSystem.CollectSpecFuncAttrs(prefab, baseElem, sfuncs)
-	end
-	
-	return selfTbl
-end
-
-function prefabSystem.EvaluateSpecFuncs(prefab, root, sfuncs, data)
-	local warn = warnLogger.new("EvaluateSpecFuncs")
-	
-	for childName, childData in pairs(data.Children) do
-		local childInstance = root:FindFirstChild(childName)
-		if childInstance == nil then warn(`Expected instance {root.Name}.{childName} not found`) continue end
-		prefabSystem.EvaluateSpecFuncs(prefab, childInstance, sfuncs, childData)
-	end
-
-	for attrName, sFuncData in pairs(data.Attributes) do
-		if root:GetAttribute(attrName) ~= nil then continue end
-		local success, result = prefabSystem.EvaluateSpecFunc(prefab, root, sFuncData)
-		if not success then continue end
-		root:SetAttribute(attrName, result)
-	end
-end
-
-local SPECFUNCS_SUBSTITUTION_PATTERN = "%${(.+)}"
-function prefabSystem.StrIsSpecFunc(str)
-	local sfuncContent = string.match(str, `^{SPECFUNCS_SUBSTITUTION_PATTERN}$`)
-	return sfuncContent ~= nil, sfuncContent
-end
-
-function prefabSystem.ParseSpecFunc(prefab, element, sfuncStr, sfuncs)
-	local warn = warnLogger.new("SFuncParsing", `{element.Parent.Name}.{element.Name}`, sfuncStr)
-	
-	local isSfunc, sfuncContent = prefabSystem.StrIsSpecFunc(sfuncStr)
-	if not isSfunc then return false, nil end
-
-	local sfuncArgs = {}
-	local sfuncCurrentArg = ""
-	local escaping = false
-	local inStr = false
-	for c in string.gmatch(sfuncContent, ".") do
-		if c:match("^%s$") and not inStr then continue end
-		if c == "\\" and not escaping then escaping = true continue end
-		if c == "\"" and not escaping and not inStr then inStr = true continue end
-		if c == "\"" and not escaping and inStr then inStr = false continue end
-
-		if c == "," and not escaping and not inStr then
-			table.insert(sfuncArgs, sfuncCurrentArg)
-			sfuncCurrentArg = ""
-			continue
-		end
-
-		if c == 'n' and escaping then
-			sfuncCurrentArg = sfuncCurrentArg .. "\n"
-		elseif c == 't' and escaping then
-			sfuncCurrentArg = sfuncCurrentArg .. "\t"
-		elseif escaping then
-			warn(`Received unknown escape \"\\{c}\", ignoring backslash and treating as a normal character`)
-			sfuncCurrentArg = sfuncCurrentArg .. c
-		else
-			sfuncCurrentArg = sfuncCurrentArg .. c
-		end
-
-		escaping = false
-	end
-	table.insert(sfuncArgs, sfuncCurrentArg)
-
-	local sfuncExpectedType = table.remove(sfuncArgs, 1)
-	local sfuncName = table.remove(sfuncArgs, 1)
-	local sfunc = sfuncs[sfuncName]
-	if sfunc == nil then
-		warn(`SpecialFunc \"{sfuncName}\" not found!`)
-		return false, nil
-	end
-	
-	return true, {
-		Func = sfunc,
-		Name = sfuncName,
-		Args = sfuncArgs,
-		Type = sfuncExpectedType,
-		Expr = sfuncContent
-	}
-end
-
-function prefabSystem.EvaluateSpecFunc(prefab, element, sfuncData)
-	local warn = warnLogger.new("SFuncExec", sfuncData.Expr, sfuncData.Name)
-	
-	local success, result = pcall(sfuncData.Func, prefab, element, unpack(sfuncData.Args))
-	if success and typeof(result) == sfuncData.Type then return success, result end
-	if not success then
-		warn(`Execution failed with reason \"{result}\"`)
-		return success, result
-	end
-	
-	warn(`Executed successfully but did not return expected type {sfuncData.Type}`)
-	return false, nil
+function prefabSystem.PointInPartBounds(part, point)
+	point = part.CFrame:PointToObjectSpace(point):Abs() * 0.5
+	return (point.X <= part.Size.X) and (point.Y <= part.Size.Y) and (point.Z <= part.Size.Z)
 end
 
 apiConsumer.DoAPILoop(plugin, API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnAPIUnloaded)]]></ProtectedString>
@@ -745,743 +387,10 @@ apiConsumer.DoAPILoop(plugin, API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnA
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX043E84C0F12243FEBAFFDBE5D03F1550">
+		<Item class="ModuleScript" referent="RBX11D84A03A32B48D4A296308D4F48B512">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
-				<ProtectedString name="Source"><![CDATA[--[[
-	This module is provided for convenience of consumers of the serializer API
-	providing a reference implementation for correctly retrieving and validating a reference to the API table
-
-	For a working example of a plugin making use of this API via this module
-	see: https://github.com/Sprixitite/InfiltrationEngine-PrefabSystem
-]]
-
-local coreGui = game:GetService("CoreGui")
-
-export type Token = string
-export type Hook = (...any) -> nil
-export type HookType = "APIExtensionLoaded"|"APIExtensionUnloaded"|"PreSerialize"|"PreSerializeMissionSetup"|"SerializerUnloaded"
-export type APIExtension = { [string] : (...any) -> ...any }
-
-export type APIReference = {
-	-- Generic
-	GetAPIVersion 			: () -> number,
-	GetCodeVersion 			: () -> number,
-	GetAttributesMap 		: () -> { [string] : { [number] : any } },
-	GetAttributeTypes 		: () -> { [string] : number },
-	GetRegistrantFactory	: (author: string, plugin: string) -> ((hookName: string) -> string), 
-
-	-- HookTypes
-	GetHookTypes 			: () -> { [number] : string },
-	IsHookTypeValid 		: (hookType: string, warnCaller: string?) -> boolean,
-
-	-- Hooks
-	AddHook 				: (hookType: HookType, registrant: string, hook: Hook, hookState: {any}?) -> Token,
-	RemoveHook 				: (token: Token) -> nil,
-
-	-- APIExtensions
-	AddAPIExtension 		: (name: string, author: string, contents: APIExtension) -> Token,
-	GetAPIExtension			: (name: string, author: string) -> APIExtension,
-	RemoveAPIExtension		: (token: Token) -> nil
-}
-
-type AnyTbl = { [string] : any }
-
-local APIConsumer = {}
-
-local function ValidateArgTypes(fname: string, ...) : boolean
-	local args = {...}
-	for _, argSettings in ipairs(args) do
-		local argName = argSettings[1]
-		local argValue = argSettings[2]
-		local argType = type(argValue)
-		local argExpectedType = argSettings[3]
-		if argType ~= argExpectedType then
-			warn(`Invalid argument {argName} passed to function {fname} - expected type {argExpectedType} but got {argType}!`)
-			return false
-		end
-	end
-	return true
-end
-
-APIConsumer.ValidateArgTypes = ValidateArgTypes
-
--- Yields until timeOut is elapsed or API is found
-APIConsumer.WaitForAPI = function(timeOut: number?) : APIReference?
-	timeOut = if timeOut == nil then math.huge else timeOut
-
-	if not ValidateArgTypes(
-		"WaitForAPI",
-		{"timeOut", timeOut, "number"}
-		) then return end
-
-	local presenceIndicator = coreGui:WaitForChild("InfilEngine_SerializerAPIAvailable", timeOut)
-	if not presenceIndicator then return end
-
-	local apiTbl = shared.InfilEngine_SerializerAPI
-	if not (tostring(apiTbl) == presenceIndicator.Value) then return end
-
-	return apiTbl
-end
-
--- Attempt to get the API without blocking - returns false + nil if unavailable, otherwise returns true + APIReference
-APIConsumer.TryGetAPI = function() : (boolean, APIReference?)
-	local presenceIndicator = coreGui:FindFirstChild("InfilEngine_SerializerAPIAvailable")
-	if not presenceIndicator then return false, nil end
-
-	local apiTbl = shared.InfilEngine_SerializerAPI
-	if not (tostring(apiTbl) == presenceIndicator.Value) then return false, nil end
-
-	return true, apiTbl
-end
-
--- Never returns unless there's an error
--- Continually wires up handling of serializer load/unload as well as unloading of consumer plugin as needed
--- Avoid doing this yourself if you can help it
-APIConsumer.DoAPILoop = function<StateT>(
-	callerPlugin: Plugin,
-	srcname: string,
-	loadedClbck: (api: APIReference, state: StateT) -> nil,
-	unloadedClbck: (api: APIReference, state: StateT) -> nil, 
-	state: StateT?
-) : never
-	state = if state == nil then {} else state
-
-	if typeof(callerPlugin) ~= "Instance" then
-		warn(`Invalid argument callerPlugin passed to DoAPILoop - expected type Plugin but got {typeof(callerPlugin)}!`)
-		return
-	end
-
-	if callerPlugin.ClassName ~= "Plugin" then
-		warn(`Invalid argument callerPlugin passed to DoAPILoop - expected type Plugin but got {callerPlugin.ClassName}!`)
-		return
-	end
-
-	if not ValidateArgTypes(
-		"DoAPILoop", 
-		{"srcname", srcname, "string"},
-		{"loadedClbck", loadedClbck, "function"},
-		{"unloadedClbck", unloadedClbck, "function"},
-		{"state", state, "table"}
-		) then return end
-
-	local api = APIConsumer.WaitForAPI()
-	if api == nil then return APIConsumer.DoAPILoop(callerPlugin, srcname, loadedClbck, unloadedClbck, state) end
-
-	loadedClbck(api, state)
-
-	local pluginUnloadCallback
-	local unloadToken
-
-	pluginUnloadCallback = callerPlugin.Unloading:Connect(function()
-		pluginUnloadCallback:Disconnect()
-		pluginUnloadCallback = nil
-		unloadedClbck(api, state)
-		if unloadToken ~= nil then api.RemoveHook(unloadToken) end
-	end)
-
-	unloadToken = api.AddHook("SerializerUnloaded", `APIConsumerFramework_{srcname}`, function()
-		if pluginUnloadCallback then pluginUnloadCallback:Disconnect() pluginUnloadCallback = nil end
-		unloadedClbck(api, state)
-		task.spawn(APIConsumer.DoAPILoop, callerPlugin, srcname, loadedClbck, unloadedClbck, state)
-	end)
-end
-
-return APIConsumer]]></ProtectedString>
-				<string name="ScriptGuid">{9C413FEA-27C9-4E1A-A9CC-E7239C0F162A}</string>
-				<BinaryString name="AttributesSerialize"></BinaryString>
-				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
-				<bool name="DefinesCapabilities">false</bool>
-				<string name="Name">APIConsumer</string>
-				<int64 name="SourceAssetId">-1</int64>
-				<BinaryString name="Tags"></BinaryString>
-			</Properties>
-		</Item>
-		<Item class="ModuleScript" referent="RBX38619AE0960A4221A3CE692CDD7F1488">
-			<Properties>
-				<Content name="LinkedSource"><null></null></Content>
-				<ProtectedString name="Source"><![CDATA[--[[
-	Slogger, yet another minimal Lua logging module
-	Log function + post-init function are configurable, for dealing with the slog that is lua version compatibility
-	
-	Tested to be compatible with Lua5.1
-	Presumed compatible with Lua5.2-5.5/Luajit/Luau
-	
-	© Sprixitite, 2025
-]]
-
-local slogger = {}
-
-local sloggerCfg = {
-	postInit = function(tbl) return tbl end,
-	logFunc = print
-}
-
-local function varargs(...)
-	local argCount = select('#', ...)
-	local argTbl = { ... }
-	local i = 0
-	return function()
-		i = i + 1
-		if i <= argCount then return i, argTbl[i], argCount end
-	end, argTbl
-end
-
-function slogger.new(...)
-	local loggerPrefix = ""
-	local varargsIter, argsTbl = varargs(...)
-	
-	for i, arg in varargsIter do
-		loggerPrefix = loggerPrefix .. tostring(arg) .. " : "
-	end
-	
-	local doWarn = function(tbl, ...)
-		local finalMsg = ""
-		
-		for i, arg, argCount in varargs(...) do
-			finalMsg = finalMsg .. tostring(arg)
-			if i ~= argCount then
-				finalMsg = finalMsg .. " : "
-			end
-		end
-		
-		sloggerCfg.logFunc(loggerPrefix .. finalMsg)
-	end
-	
-	local specialize = function(...)
-		return slogger.new(unpack(argsTbl), ...)
-	end
-	
-	local newLogger = setmetatable({ specialize = specialize }, {__call = doWarn})
-	return sloggerCfg.postInit(newLogger)
-end
-
-function slogger.init(cfg)
-	for k, v in pairs(cfg) do
-		if type(sloggerCfg[k]) == type(v) then
-			sloggerCfg[k] = v
-		end
-	end
-	return slogger
-end
-
-return slogger]]></ProtectedString>
-				<string name="ScriptGuid">{9A026DAB-AF18-4CD8-98AE-F24BAF01A1ED}</string>
-				<BinaryString name="AttributesSerialize"></BinaryString>
-				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
-				<bool name="DefinesCapabilities">false</bool>
-				<string name="Name">Slogger</string>
-				<int64 name="SourceAssetId">-1</int64>
-				<BinaryString name="Tags"></BinaryString>
-			</Properties>
-		</Item>
-		<Item class="ModuleScript" referent="RBX335D78C2645E44C58D047A8C76F96E56">
-			<Properties>
-				<Content name="LinkedSource"><null></null></Content>
-				<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
-
-local LuaExpr = {}
-
-local LUA_EXPR_BODY_STRMATCH = "([\\\'\"%-%+%*%^%.,:/_%w%s{}<>!=+|#]+)"
-
-function LuaExpr.MakeEvalRules(prefix, delim)
-	local bodyMatch = prefix .. LUA_EXPR_BODY_STRMATCH .. delim 
-	return {
-		BodyMatch = bodyMatch,
-		SoleMatch = '^' .. bodyMatch .. '$'
-	}
-end
-
-local LUA_EXPR_MATCH_DEFAULT = LuaExpr.MakeEvalRules("%$%(", "%)")
-
-function LuaExpr.IsSoleExpr(str, rules)
-	local soleExprData = string.match(str, rules.SoleMatch)
-	return soleExprData ~= nil, soleExprData
-end
-
-function LuaExpr.EvalSoleExpr(str, fenv, rules, exprName, multiRet)
-	exprName = glut.default_typed(exprName, "LUAEXPR_UNNAMED", "exprName", "LuaExpr.EvalSoleExpr")
-	multiRet = glut.default_typed(multiRet, false, "multiRet", "LuaExpr.EvalSoleExpr")
-	
-	local leadingReturn = string.match(str, "^return%s+")
-	if leadingReturn == nil then str = "return " .. str end
-	
-	local success, count, args = glut.str_runlua(str, fenv, exprName)
-	if not success then
-		return false, "LuaExpr : " .. exprName .. " : Evaluation failed : " .. count
-	end
-	
-	return success, args[1]
-end
-
-function LuaExpr.Eval(str, fenv, rules, exprName, soleOnly)
-	if not glut.type_check(str, "string", "str", "LuaExpr.Eval") then return end
-	if not glut.type_check(fenv, "table", "fenv", "LuaExpr.Eval") then return end
-	
-	rules = glut.default_typed(rules, LUA_EXPR_MATCH_DEFAULT, "rules", "LuaExpr.Eval")
-	exprName = glut.default_typed(exprName, "LUAEXPR_UNNAMED", "epxrName", "LuaExpr.Eval")
-	soleOnly = glut.default_typed(soleOnly, false, "soleOnly", "LuaExpr.Eval")
-	
-	local isSole, soleData = LuaExpr.IsSoleExpr(str, rules)
-	if isSole then return LuaExpr.EvalSoleExpr(soleData, fenv, rules, exprName, isSole) end
-	if soleOnly then return false, nil end
-	
-	local i = 0
-	return true, string.gsub(str, rules.BodyMatch, function(subexpr)
-		i = i+1
-		local subExprName = exprName .. '#' .. tostring(i)
-		local evalSuccess, evalVal = LuaExpr.EvalSoleExpr(subexpr, fenv, rules, subExprName, false)
-		return tostring(evalVal)
-	end)
-end
-
-return LuaExpr]]></ProtectedString>
-				<string name="ScriptGuid">{DE119178-750B-474C-BF0B-A605B90864FB}</string>
-				<BinaryString name="AttributesSerialize"></BinaryString>
-				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
-				<bool name="DefinesCapabilities">false</bool>
-				<string name="Name">LuaExpr</string>
-				<int64 name="SourceAssetId">-1</int64>
-				<BinaryString name="Tags"></BinaryString>
-			</Properties>
-		</Item>
-		<Item class="ModuleScript" referent="RBX6C1B1931EB944E03A1F2A16B100EE7EA">
-			<Properties>
-				<Content name="LinkedSource"><null></null></Content>
-				<ProtectedString name="Source"><![CDATA[--[[
-	GLUt // GoodLuaUtilities // Lua5.1 utilities module
-	
-	© Sprixitite, 2025
-]]
-
-local GLUt = {}
-
-local GLUtCfg = {
-	print = print,
-	warn  = function(...) print("WARNING", ...) end,
-	error = error,
-	type  = type
-}
-
-local patternSpecChars = { '(', ')', '.', '%', '+', '-', '*', '?', '[', ']', '^', '$' }
-
-GLUt.severity = {
-	SILENT = 0,
-	LOG = 1,
-	WARN = 2,
-	ERR = 3,
-	ERROR = 3
-}
-
-local function severity_warn(sev, ...)
-	if sev == GLUt.severity.SILENT then return end
-	local warn_fn
-	if sev == GLUt.severity.LOG then
-		warn_fn = GLUtCfg.print
-	elseif sev == GLUt.severity.WARN then
-		warn_fn = GLUtCfg.warn
-	else
-		warn_fn = GLUtCfg.error
-	end
-	warn_fn(...)
-end
-
-function GLUt.configure(tbl)
-	for k, v in pairs(tbl) do
-		if GLUtCfg[k] ~= nil then
-			GLUtCfg[k] = v
-		else
-			GLUtCfg.warn("Attempt to set invalid GLUtCfg Key \"" .. tostring(k) .. "\"")
-		end
-	end
-end
-
-function GLUt.custom_iter(tbl, keys)
-	local i = 0
-	return function()
-		i = i + 1
-		local requested = {}
-		local iTbl = tbl[i]
-		if iTbl == nil then return nil end
-		for ki, k in ipairs(keys) do
-			requested[ki] = iTbl[k]
-		end 
-		return i, unpack(requested)
-	end
-end
-
-function GLUt.custom_iter_template(...)
-	local varargs = { ... }
-	return function(tbl) return GLUt.custom_iter(tbl, varargs) end
-end
-
-function GLUt.default(arg, default)
-	return (arg == nil) and default or arg
-end
-
-function GLUt.default_exec(arg, fn)
-	return (arg == nil) and fn() or arg
-end
-
-function GLUt.default_bounds(arg, default, min, max)
-	if arg == nil then return default end
-	if arg < min then return default end
-	if max < arg then return default end
-	return arg
-end
-
-function GLUt.default_typed(arg, default, argName, funcName)
-	local argType = GLUtCfg.type(arg)
-	local defaultType = GLUtCfg.type(default)
-	if argType == defaultType then return arg end
-	if argType == "nil" then return default end
-	GLUt.type_warn(argName, funcName, defaultType, argType)
-	return default
-end
-
-function GLUt.type_warn(argName, funcName, expected, got, severity)
-	if argName == nil or expected == got then return end
-	if type(severity) == "boolean" then
-		severity = severity and GLUt.severity.ERROR or GLUt.severity.WARN 
-	end
-	severity = GLUt.default_bounds(severity, GLUt.severity.ERROR, GLUt.severity.SILENT, GLUt.severity.ERROR)
-
-	local warnStart = GLUt.type_is(funcName, "string") and (funcName .. ": expected arg \"") or "Expected arg \""
-	severity_warn(severity, warnStart .. argName .. "\" of type \"" .. expected .. "\" got type \"" .. got .. "\"!")
-	severity_warn(severity, "Traceback: " .. debug.traceback())
-end
-
-function GLUt.type_check(arg, expected, argName, funcName, severity)
-	local argType = GLUtCfg.type(arg)
-
-	expected = string.gsub(expected, '?', "|nil")
-	for _, validType in pairs(GLUt.str_split(expected, '|')) do
-		if validType == argType then return true end
-	end
-
-	GLUt.type_warn(argName, funcName, expected, argType, severity)
-
-	return false
-end
-
-function GLUt.type_is(a1, t)
-	return GLUtCfg.type(a1) == t
-end
-
-function GLUt.type_eq(a1, a2)
-	return GLUtCfg.type(a1) == GLUtCfg.type(a2)
-end
-
-function GLUt.vararg_capture(...)
-	local n = select('#', ...)
-	return n, { ... }
-end
-
-function GLUt.vararg_iter(...)
-	local n, t = GLUt.vararg_capture(...)
-	local i = 0
-	return function()
-		i = i + 1
-		if i <= n then return i, t[i], n end
-	end, t
-end
-
-function GLUt.str_split(str, separator)
-	str = str .. separator
-	separator = GLUt.str_escape_pattern(separator)
-
-	local substrs = {}
-	for substr in string.gmatch(str, "(.-)" .. separator) do
-		substrs[#substrs+1] = substr
-	end
-	return substrs
-end
-
-function GLUt.str_has_match(str, pattern)
-	return string.match(str, pattern) ~= nil
-end
-
-function GLUt.str_escape_pattern(str)
-	local escaped = str
-	for _, specChar in ipairs(patternSpecChars) do
-		local escapedSpec = '%' .. specChar
-		escaped = string.gsub(escaped, escapedSpec, (specChar == '%') and "%%" or '%' .. escapedSpec)
-	end
-	return escaped
-end
-
-function GLUt.str_double_substr(str, substr)
-	local safe = GLUt.str_escape_pattern(substr)
-	return string.gsub(str, safe, safe .. safe)
-end
-
-function GLUt.str_isempty(str)
-	return string.match(str, "^%s$") ~= nil
-end
-
-function GLUt.str_chariter(str)
-	local n = #str
-	local i = 0
-	return function()
-		i = i + 1
-		if i <= n then return GLUt.str_getchar(str, i) end
-	end
-end
-
-function GLUt.str_trim(str, pattern)
-	pattern = GLUt.default(pattern, "%s")
-	return GLUt.str_trimend(GLUt.str_trimstart(str, pattern), pattern)
-end
-
-function GLUt.str_trimstart(str, pattern)
-	pattern = GLUt.default(pattern, "%s")
-	return string.gsub(str, '^' .. pattern, "")
-end
-
-function GLUt.str_trimend(str, pattern)
-	pattern = GLUt.default(pattern, "%s")
-	return string.gsub(str, pattern .. '$', "")
-end
-
-function GLUt.str_getchar(str, i)
-	return string.sub(str, i, i)
-end
-
-local unidentified = -1
-function GLUt.str_runlua(source, fenv, chunkName)
-	chunkName = GLUt.default_exec(chunkName, function()
-		unidentified = unidentified + 1
-		return "loadstring#" .. tostring(unidentified) 
-	end)
-
-	local strFun, failReason = loadstring(source, chunkName)
-	if GLUtCfg.type(strFun) ~= "function" then
-		return false, "Loadstring : " .. chunkName .. " : Evaluation failed : " .. failReason
-	end
-
-	strFun = setfenv(strFun, fenv)
-
-	return pcall(function()
-		return GLUt.vararg_capture(strFun())
-	end)
-end
-
-function GLUt.str_runlua_unsafe(source, chunkName)
-	local strFun, failReason = loadstring(source, chunkName)
-	if GLUtCfg.type(strFun) ~= "function" then
-		return false, "Loadstring : " .. chunkName .. " : Evaluation failed : " .. failReason
-	end
-
-	return pcall(function()
-		return GLUt.vararg_capture()
-	end)
-end
-
-function GLUt.kvp_tostring(k, v)
-	return tostring(k) .. " = " .. tostring(v)
-end
-
-function GLUt.tbl_tryindex(tbl, ...)
-	local indexing = tbl
-	for _, k in GLUt.vararg_iter(...) do
-		if GLUtCfg.type(indexing) ~= "table" then
-			return false, indexing
-		end
-		indexing = indexing[tostring(k)]
-	end
-
-	return true, indexing
-end
-
-function GLUt.tbl_deepget(tbl, create_missing, ...)
-	local indexing = tbl
-	for i, k, n in GLUt.vararg_iter(...) do
-		k = tostring(k)
-
-		if indexing[k] == nil and create_missing then
-			indexing[k] = {}
-		end
-
-		indexing = indexing[k]
-		if GLUtCfg.type(indexing) ~= "table" and not (i == n) then
-			return false, indexing, k
-		end
-	end
-
-	return true, indexing
-end
-
-function GLUt.tbl_getkeys(tbl)
-	local keys = {}
-	for k, _ in pairs(tbl) do keys[#keys+1] = k end
-	return keys
-end
-
-function GLUt.tbl_clone(tbl, shallow)
-	shallow = GLUt.default(shallow, false)
-
-	local cloned = {}
-	for k, v in pairs(tbl) do
-		if GLUtCfg.type(v) == "table" and not shallow then
-			cloned[k] = GLUt.tbl_clone(v, shallow)
-		else
-			cloned[k] = v
-		end
-	end
-	return cloned
-end
-
-function GLUt.tbl_merge(tbl1, tbl2, priority)
-	priority = GLUt.default(priority, 1)
-	local secondPriority = priority == 2
-	local merged = {}
-	for k, v in pairs(tbl1) do
-		merged[k] = v
-	end
-	for k, v in pairs(tbl2) do
-		local existing = merged[k]
-		if GLUtCfg.type(existing) == "table" then
-			merged[k] = GLUt.tbl_merge(existing, v, priority)
-		elseif existing ~= nil and secondPriority then
-			merged[k] = v
-		elseif merged[k] == nil then
-			merged[k] = v
-		end
-	end
-	return merged
-end
-
-function GLUt.tbl_findsize(tbl)
-	local i = 0
-	for _, _ in pairs(tbl) do i = i + 1 end
-	return i
-end
-
-local function tbl_tostring(tblName, tbl, levels, level)
-	local str = tblName .. " = {"
-	local indent = string.rep("  ", level)
-	local n = GLUt.tbl_findsize(tbl)
-	local i = 0
-	for k, v in pairs(tbl) do
-		i = i + 1
-		str = str .. '\n' .. indent
-		if GLUtCfg.type(v) == "table" and levels > level then
-			str = str .. tbl_tostring(k, v, levels, level+1)
-		else
-			str = str .. GLUt.kvp_tostring(k, v)
-		end
-		if i < n then str = str .. ',' end
-	end
-	return str
-end
-
-function GLUt.tbl_tostring(tbl, levels, tblName)
-	GLUt.default(tblName, tostring(tbl))
-	return tbl_tostring(tblName, tbl, levels, 1)
-end
-
-function GLUt.tbl_any(tbl, f)
-	local anySucceed = nil
-	for k, v in pairs(tbl) do
-		anySucceed = GLUt.default(anySucceed, false) or f(k, v)
-		if anySucceed then break end
-	end
-	return anySucceed
-end
-
-function GLUt.tbl_all(tbl, f)
-	local allSucceed = nil
-	for k, v in pairs(tbl) do
-		allSucceed = GLUt.default(allSucceed, true) and f(k, v)
-		if not allSucceed then break end
-	end
-	return allSucceed
-end
-
-function GLUt.tbl_is_arr(tbl)
-	local isArr = true
-	for k, v in pairs(tbl) do
-		isArr = isArr and GLUtCfg.type(k) == "number"
-		if not isArr then break end
-	end
-	return isArr
-end
-
-local function tbl_arginfo(argType, name, index, expectedType)
-	local typeStr = GLUt.type_is(expectedType, "string") and (" <T:" .. expectedType .. ">") or ""
-	return argType .. " \"" .. name .. "\" (#" .. tostring(index) .. ")" .. typeStr 
-end
-
-local function tbl_argextract(fname, t, arglayout)
-	local index = arglayout[1]
-	local name = arglayout[2]
-	local expectedType = arglayout[3]
-	local canName = arglayout[4]
-	local default = arglayout.Default or arglayout.default
-	local vital = GLUt.default(arglayout.Vital or arglayout.vital, false)
-
-	local tVal = t[index]
-	if canName and tVal ~= nil then
-		if t[name] ~= nil then
-			return GLUtCfg.error(fname .. "@tblcall : " .. tbl_arginfo("Arg", name, index, expectedType) .. " passed both by name and index!")
-		end
-	elseif canName then
-		tVal = t[name]
-	end
-
-	if tVal == nil and default ~= nil then
-		tVal = default
-	end
-
-	if tVal == nil and expectedType == false then
-		return nil
-	elseif tVal == nil and not GLUt.str_has_match(expectedType, "%?") then
-		local argType = vital and "Vital Arg" or "Arg"
-		return GLUtCfg.error(fname .. "@tblcall : " .. tbl_arginfo(argType, name, index, expectedType) .. " not passed!")
-	end
-
-	if expectedType == false then return tVal end
-	if not GLUt.type_check(tVal, expectedType, name, fname, true) then return nil end
-	return tVal
-end
-
-function GLUt.fun_tblcallable(fname, f, ...)
-	local n, callingConvention = GLUt.vararg_capture(...)
-	return function(tbl)
-		for k, v in pairs(tbl) do
-			local isValid = false
-			for i=1, n do
-				if isValid then break end
-				local validArg = callingConvention[i]
-				isValid = (k == i) or (k == validArg[2])
-			end
-			if not isValid then
-				GLUtCfg.error("Received unexpected argument \"" .. tostring(k) .. "\" of type \"" .. GLUtCfg.type(v) .. "\"!")
-			end
-		end
-		local args = {}
-		for i=1, n do
-			local argLayout = callingConvention[i]
-			args[i] = tbl_argextract(fname, tbl, argLayout)
-		end
-		return f(unpack(args, 1, n))
-	end
-end
-
-return GLUt]]></ProtectedString>
-				<string name="ScriptGuid">{7484DC6C-C136-46C9-992B-BD6809BF968D}</string>
-				<BinaryString name="AttributesSerialize"></BinaryString>
-				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
-				<bool name="DefinesCapabilities">false</bool>
-				<string name="Name">GLUt</string>
-				<int64 name="SourceAssetId">-1</int64>
-				<BinaryString name="Tags"></BinaryString>
-			</Properties>
-		</Item>
-		<Item class="ModuleScript" referent="RBX248D8F0CCA0443449F04D75A595685A6">
-			<Properties>
-				<Content name="LinkedSource"><null></null></Content>
-				<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
+				<ProtectedString name="Source"><![CDATA[local glut = require("./Lib/GLUt")
 
 local luaExprFuncs = {}
 
@@ -1493,22 +402,77 @@ local function returnArgs(...) return ... end
 
 local function ExprFunc(fname, f, ...)
 	local tblCallable = glut.fun_tblcallable(fname, returnArgs, ...)
-	return function(inst, state, staticState, t)
-		return f(inst, state, staticState, tblCallable(t))
+	return function(inst, attr, state, staticState, t)
+		return f(inst, attr, state, staticState, tblCallable(t))
 	end
 end
 
 local function ExprFuncOverload(fname, f, foverloading, ...)
 	local tblCallable = glut.fun_tblcallable(fname, returnArgs, ...)
-	return function(inst, state, staticState, t)
-		local overloaded = function() return foverloading(inst, state, staticState, t) end
-		return f(inst, state, staticState, overloaded, tblCallable(t))
+	return function(inst, attr, state, staticState, t)
+		local overloaded = function() return foverloading(inst, attr, state, staticState, t) end
+		return f(inst, attr, state, staticState, overloaded, tblCallable(t))
 	end
 end
 
+luaExprFuncs.Once = ExprFunc(
+	"Once",
+	function(inst, attr, state, staticState, ret, condition)
+		state._Once = state._Once or {}
+		if condition and not state._Once[attr] then
+			state._Once[attr] = true
+			return ret
+		end
+		return false
+	end,
+	{ 1, "ret", false, false, default=false },
+	{ 2, "condition", "boolean", true, default=true }
+)
+
+luaExprFuncs.tostring = ExprFunc(
+	"tostring",
+	function(inst, attr, state, staticState, value)
+		return tostring(value)
+	end,
+	{ 1, "value", false, false, vital=true }
+)
+
+luaExprFuncs.tonumber = ExprFunc(
+	"tonumber",
+	function(inst, attr, state, staticState, str)
+		return tonumber(str)
+	end,
+	{ 1, "str", "string", false, vital=true }
+)
+
+luaExprFuncs.strsan = ExprFunc(
+	"strsan",
+	function(inst, attr, state, staticState, str)
+		-- Sanitize a string for use as a global variable name
+		if string.sub(str, 1, 1):match("^%d") then
+			str = '_' .. str
+		end
+		return str:gsub("[^%w]", "_")
+	end,
+	{ 1, "str", "string", false, vital=true }
+)
+
+luaExprFuncs.stror = ExprFunc(
+	"stror",
+	function(inst, attr, state, staticState, condition, str1, str2)
+		-- Selects one of two strings depending on the state of a condition variable
+		-- Outputs str1 when condition == false
+		-- Otherwise outputs str2
+		return condition and str2 or str1
+	end,
+	{ 1, "condition", "boolean", false, vital=true },
+	{ 2, "str1", "string", false, vital=true },
+	{ 3, "str2", "string", false, vital=true }
+)
+
 luaExprFuncs.setAttributes = ExprFunc(
 	"setAttributes",
-	function(inst, state, staticState, attrs)
+	function(inst, attr, state, staticState, attrs)
 		for k, v in pairs(attrs) do
 			inst:SetAttribute(k, v)
 		end
@@ -1519,20 +483,21 @@ luaExprFuncs.setAttributes = ExprFunc(
 
 luaExprFuncs.setStateValue = ExprFunc(
 	"setStateValues",
-	function(inst, state, staticState, name, value)
-		if state[name] ~= nil then
+	function(inst, attr, state, staticState, name, value, override)
+		if state[name] ~= nil and not override then
 			error("Attempt to set already-existing StateValue \"" .. name .. "\"!")
-		end 
+		end
 		state[name] = value
 		return true
 	end,
 	{ 1, "name", "string", false, vital=true },
-	{ 2, "value", false, false, vital=true }
+	{ 2, "value", false, false, vital=true },
+	{ 3, "override", "boolean", true, default=false }
 )
 
 luaExprFuncs.stringSplit = ExprFunc(
 	"stringSplit",
-	function(inst, state, staticState, value, separator)
+	function(inst, attr, state, staticState, value, separator)
 		return glut.str_split(value, separator)
 	end,
 	{ 1, "value", "string", false, vital=true },
@@ -1541,7 +506,7 @@ luaExprFuncs.stringSplit = ExprFunc(
 
 luaExprFuncs.unpackToState = ExprFunc(
 	"unpackToState",
-	function(inst, state, staticState, unpacking, ...)
+	function(inst, attr, state, staticState, unpacking, ...)
 		local locTbl = { ... }
 		for i, v in ipairs(unpacking) do
 			local locPath = locTbl[i]
@@ -1577,7 +542,7 @@ luaExprFuncs.unpackToState = ExprFunc(
 
 luaExprFuncs.staticGroupToLocalArray = ExprFunc(
 	"staticGroupToLocalArray",
-	function(inst, state, staticState, groupName, elementPrefix, stateScriptAccess)
+	function(inst, attr, state, staticState, groupName, elementPrefix, stateScriptAccess)
 		local groupPath = glut.str_split(groupName, '.')
 		local success, groupTbl = glut.tbl_deepget(state, unpack(groupPath))
 		if not success then StaticGroupErr(groupName) end
@@ -1599,7 +564,7 @@ luaExprFuncs.staticGroupToLocalArray = ExprFunc(
 
 luaExprFuncs.importStaticGroup = ExprFunc(
 	"importStaticGroup",
-	function(inst, state, staticState, groupName, importLocation, allowDuplicates)
+	function(inst, attr, state, staticState, groupName, importLocation, allowDuplicates)
 		local importPath = glut.str_split(importLocation, '.')
 		local importKey = table.remove(importPath)
 		local success, importTbl = glut.tbl_deepget(state, true, unpack(importPath))
@@ -1628,7 +593,7 @@ luaExprFuncs.importStaticGroup = ExprFunc(
 
 luaExprFuncs.staticGroupExport = ExprFunc(
 	"staticGroupExport",
-	function(inst, state, staticState, groupName, exportValue, allowDuplicates)
+	function(inst, attr, state, staticState, groupName, exportValue, allowDuplicates)
 		-- Exports a variable as a member of a staticState group, creating the group if it does not exist
 		local groupPath = glut.str_split(groupName, '.')
 		local success, groupTbl = glut.tbl_deepget(staticState, true, unpack(groupPath))
@@ -1647,7 +612,7 @@ luaExprFuncs.staticGroupExport = ExprFunc(
 luaExprFuncs.staticGroupCombine = ExprFunc(
 	"staticGroupCombine",
 	function(
-		inst, state, staticState,
+		inst, attr, state, staticState,
 		groupName,
 		combineOp,
 		prefix,
@@ -1684,9 +649,9 @@ luaExprFuncs.staticGroupCombine = ExprFunc(
 
 luaExprFuncs.staticGroupEmpty = ExprFunc(
 	"staticGroupEmpty",
-	function(inst, state, staticState, groupName, quietFail)
+	function(inst, attr, state, staticState, groupName, quietFail)
 		-- Returns true if the StaticStateGroup at the given path is empty
-		return luaExprFuncs.staticGroupSize(inst, state, staticState, { groupName, quietFail=quietFail }) == 0
+		return luaExprFuncs.staticGroupSize(inst, attr, state, staticState, { groupName, quietFail=quietFail }) == 0
 	end,
 	{ 1, "groupName", "string", false, vital=true },
 	{ 2, "quietFail", "boolean", true, default=false }
@@ -1694,7 +659,7 @@ luaExprFuncs.staticGroupEmpty = ExprFunc(
 
 luaExprFuncs.staticGroupSize = ExprFunc( 
 	"staticGroupSize",
-	function(inst, state, staticState, groupName, asString, quietFail)
+	function(inst, attr, state, staticState, groupName, asString, quietFail)
 		-- Returns the size of the StaticStateGroup at the given path - optionally as a string
 		local groupPath = glut.str_split(groupName, '.')
 		local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
@@ -1713,7 +678,7 @@ luaExprFuncs.staticGroupSize = ExprFunc(
 luaExprFuncs.moveFirstStaticElement = ExprFunc(
 	"moveFirstStaticElement",
 	function(
-		inst, state, staticState,
+		inst, attr, state, staticState,
 		groupName,
 		destName,
 		pairItem,
@@ -1750,7 +715,7 @@ luaExprFuncs.moveFirstStaticElement = ExprFunc(
 
 luaExprFuncs.getStaticVariable = ExprFunc( 
 	"getStaticVariable",
-	function(inst, state, staticState, varName)
+	function(inst, attr, state, staticState, varName)
 		local varPath = glut.str_split(varName, '.')
 		local varKey = table.remove(varPath, #varPath)
 		local success, varTbl = glut.tbl_deepget(staticState, false, unpack(varPath))
@@ -1762,7 +727,7 @@ luaExprFuncs.getStaticVariable = ExprFunc(
 
 luaExprFuncs.fallbackIfUnset = ExprFunc(
 	"fallbackIfUnset",
-	function(inst, state, staticState, maybeUnset, fallback)
+	function(inst, attr, state, staticState, maybeUnset, fallback)
 		-- Returns the second argument if the first contains the substring "UNSET" (case-sensitive)
 		if maybeUnset == nil then return fallback end
 		if type(maybeUnset) ~= "string" then return maybeUnset end
@@ -1777,23 +742,23 @@ luaExprFuncs.fallbackIfUnset = ExprFunc(
 -- Convenience if you forget the name
 luaExprFuncs.fallbackIfDefault = ExprFuncOverload(
 	"fallbackIfDefault",
-	function(inst, state, staticState, overload, maybeUnset, fallback)
+	function(inst, attr, state, staticState, overload, maybeUnset, fallback)
 		return overload()
 	end,
 	{ 1, "maybeUnset", false, false, default=nil },
 	{ 2, "fallback", false, false, default=nil }
 )
 
-luaExprFuncs.CreateExprFenv = function(inst, instState, staticState, globalState)
+luaExprFuncs.CreateExprFenv = function(inst, attrName, instState, staticState, globalState)
 	return setmetatable(
 		{},
 		{
 			__index = function(t, k)
 				if instState[k] ~= nil then return instState[k] end
 				if k == "Global" or k == "Globals" then return globalState end
-				if luaExprFuncs[k] == nil then return nil end
+				if luaExprFuncs[k] == nil then error(`Attempt to index state with {k}, found nil`) end
 				return function(t)
-					return luaExprFuncs[k](inst, instState, staticState, t)
+					return luaExprFuncs[k](inst, attrName, instState, staticState, t)
 				end
 			end,
 		}
@@ -1810,15 +775,15 @@ return luaExprFuncs]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBXEEAEEB34AC6F4043984529B915EAB2FD">
+		<Item class="ModuleScript" referent="RBX6340BD4445E949C5805FA35482A02B8D">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
-				<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
+				<ProtectedString name="Source"><![CDATA[local glut = require("./Lib/GLUt")
 local exprFuncs = require("./LuaExprFuncs")
 
 local ShebangFuncs = {}
 
-ShebangFuncs.CreateShebangFenv = function(inst, state, staticState, globalState)
+ShebangFuncs.CreateShebangFenv = function(inst, attrName, instState, staticState, globalState)
 	local tableLib = glut.tbl_clone(table)
 	local stringLib = glut.tbl_clone(string)
 
@@ -1830,42 +795,42 @@ ShebangFuncs.CreateShebangFenv = function(inst, state, staticState, globalState)
 		{
 			__index = function(tbl, k)
 				return function(targs)
-					return exprFuncs[k](inst, state, staticState, targs)
+					return exprFuncs[k](inst, attrName, instState, staticState, targs)
 				end
 			end,
 		}
 	)
 	
 	local fenvBase = {
-		exprFuncs = luaExprFuncs,
-		luaExprFuncs = luaExprFuncs,
-		global = globalState,
-		globals = globalState,
-		globalState = globalState,
-		state = state,
-		static = staticState,
-		staticState = staticState,
-		math = math,
-		table = tableLib,
-		string = stringLib,
-		CFrame = CFrame,
-		Color3 = Color3,
-		Vector2 = Vector2,
-		Vector3 = Vector3,
-		tostring = tostring,
-		tonumber = tonumber,
-		pairs = pairs,
-		ipairs = ipairs,
-		next = next,
-		print = print,
-		unpack = unpack,
+		exprFuncs 	  = luaExprFuncs,
+		luaExprFuncs  = luaExprFuncs,
+		global 		  = globalState,
+		globals 	  = globalState,
+		globalState   = globalState,
+		state 		  = instState,
+		static 		  = staticState,
+		staticState   = staticState,
+		math 		  = math,
+		table 		  = tableLib,
+		string 		  = stringLib,
+		CFrame 		  = CFrame,
+		Color3 		  = Color3,
+		Vector2 	  = Vector2,
+		Vector3 	  = Vector3,
+		tostring 	  = tostring,
+		tonumber 	  = tonumber,
+		pairs 		  = pairs,
+		ipairs 		  = ipairs,
+		next 		  = next,
+		print 		  = print,
+		unpack 		  = unpack,
 		setAttributes = function(t) for k, v in pairs(t) do inst:SetAttribute(k, v) end return true end
 	}
 
 	-- state can't overshadow builtin libraries
 	setmetatable(
 		fenvBase,
-		{ __index = state }
+		{ __index = instState }
 	)
 	return fenvBase
 end
@@ -1881,7 +846,7 @@ return ShebangFuncs
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBXE9AAD2192B06430FB9BF754985805042">
+		<Item class="ModuleScript" referent="RBXD49031676B0C46D5A522FA639F6FA747">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[return {
@@ -1899,6 +864,2491 @@ return ShebangFuncs
 				<int64 name="SourceAssetId">-1</int64>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBX7D5DDDDD1CE844F0BE3450F7E0F5346D">
+			<Properties>
+				<Content name="LinkedSource"><null></null></Content>
+				<ProtectedString name="Source"><![CDATA[local warnLogger = require("./Lib/Slogger").init{
+    postInit = table.freeze,
+    logFunc = warn
+}
+
+local warn = warnLogger.new("PrefabSystem", "PrefabScope")
+local prefabTarget = require("./PrefabTarget")
+
+local PrefabScope = {}
+PrefabScope.ValidScopes = {
+    STATIC   = { "Static"   },
+    INSTANCE = { "Instance" },
+    REMOTE	 = { "Remote", "Extern", "Area" }
+}
+
+function PrefabScope.GetScope(prefab, scopeName)
+    return prefab:FindFirstChild(scopeName)
+        or prefab:FindFirstChild(scopeName:upper())
+        or prefab:FindFirstChild(scopeName:lower())
+end
+
+function PrefabScope.GetScopeOfType(prefab, scopeType)
+    scopeType = string.upper(scopeType)
+    for _, scopeName in ipairs(PrefabScope.ValidScopes[scopeType]) do
+
+        local folder = PrefabScope.GetScope(prefab, scopeName)
+        if folder then return folder end
+    end
+end
+
+function PrefabScope.GetAllScopes(prefab)
+    local warn = warn.specialize("GetAllScopes")
+
+    local scopes = {}
+    for _, folder in ipairs(prefab:GetChildren()) do
+        if folder.Name:lower():match("_?disabled?$") ~= nil then continue end
+        local folderScope = PrefabScope.GetScopeType(folder.Name)
+        if scopes[folderScope] ~= nil then
+            warn(`Double-definition of scope "{folder}"`)
+        end
+        scopes[folderScope] = folder
+    end
+
+    return scopes
+end
+
+function PrefabScope.GetScopeType(scopeName)
+    for k, validScopeNames in pairs(PrefabScope.ValidScopes) do
+        for _, validName in ipairs(validScopeNames) do
+            if scopeName == validName or scopeName == validName:lower() or scopeName == validName:upper() then
+                return k
+            end
+        end
+    end
+    return nil
+end
+
+function PrefabScope.UnpackToMission(prefabScope, mission)
+    for _, target in ipairs(prefabScope:GetChildren()) do
+        if not target:IsA("Folder") then continue end
+        prefabTarget.UnpackToMission(target, mission)
+    end
+end
+
+function PrefabScope.GetSettingsInstance(prefabScope, instName)
+    local inst = prefabScope:FindFirstChild(instName)
+    if inst then
+        return true, inst
+    else
+        return false, `Expected Group Setting "{instName}" in Group "{prefabScope.Name}", but no such Instance exists`
+    end
+end
+
+function PrefabScope.GetAllSettingsInstances(prefabScope, excludeList)
+    excludeList = excludeList or {}
+    local excludeDict = {}
+
+    for _, name in ipairs(excludeList) do excludeDict[name] = true end
+
+    local found = {}
+    for _, child in ipairs(prefabScope:GetChildren()) do
+        if child:IsA("Folder") then continue end
+        if excludeDict[child.Name] then continue end
+        found[#found+1] = child
+    end
+    return found
+end
+
+return PrefabScope]]></ProtectedString>
+				<string name="ScriptGuid">{5DF1A03C-3C38-4D6B-9D82-027B99FB69AD}</string>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+				<bool name="DefinesCapabilities">false</bool>
+				<string name="Name">PrefabScope</string>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBX618D16CAFBB94E74B127616CDB8044C1">
+			<Properties>
+				<Content name="LinkedSource"><null></null></Content>
+				<ProtectedString name="Source"><![CDATA[local InstanceMan = require("./InstanceManager")
+
+local PrefabTarget = {}
+
+function PrefabTarget.ToMissionTarget(prefabTarget, mission)
+    return mission:FindFirstChild(prefabTarget.Name)
+end
+
+function PrefabTarget.UnpackToMission(prefabTarget, mission)
+    local unpackingTo = PrefabTarget.ToMissionTarget(prefabTarget, mission)
+
+    for _, c in ipairs(prefabTarget:GetChildren()) do
+        c:Clone().Parent = unpackingTo
+    end
+
+    local folders = {}
+    for _, c in ipairs(unpackingTo:GetChildren()) do
+        if not c:IsA("Folder") then continue end
+        folders[c.Name] = folders[c.Name] or {}
+        local fName = folders[c.Name]
+        fName[#fName+1] = c
+    end
+
+    for _, needMerge in pairs(folders) do
+        InstanceMan.MergeFolders(unpack(needMerge))
+    end
+end
+
+return PrefabTarget]]></ProtectedString>
+				<string name="ScriptGuid">{99F31C5C-972C-441B-AFB8-7C53F3A48C35}</string>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+				<bool name="DefinesCapabilities">false</bool>
+				<string name="Name">PrefabTarget</string>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+		</Item>
+		<Item class="ModuleScript" referent="RBX010530020EEC469B954279C0750B0643">
+			<Properties>
+				<Content name="LinkedSource"><null></null></Content>
+				<ProtectedString name="Source"><![CDATA[local InstanceManager = {}
+
+function InstanceManager.MergeFolders(...)
+    local folders = { ... }
+    if #folders == 1 then return folders[1] end
+    local mergeInto = folders[1]
+
+    for i=2, #folders do
+        local folder = folders[i]
+        local childFolders = {}
+        for _, child in ipairs(folder:GetChildren()) do
+            if child:IsA("Folder") then
+                childFolders[#childFolders] = child
+                continue
+            end
+            child.Parent = mergeInto
+        end
+        InstanceManager.MergeFolders(unpack(childFolders))
+        folder:Destroy()
+    end
+
+    return mergeInto
+end
+
+local defaultSort = function(i1, i2) return i1.Name < i2.Name end
+
+type ExecResult = { Result: { any }, Children: { [Instance] : ExecResult }? }
+-- Execute a function recursively on an instance and its children
+function InstanceManager.DeepExecute(root: Instance, exec: (Instance) -> ...any?, sortFn: (Instance, Instance) -> boolean, multiRet: boolean, ...) : ExecResult
+    local results = {
+        Result = nil,
+        Children = {}
+    }
+
+    if multiRet then
+        results.Result = { exec(root, ...) }
+    else
+        results.Result = exec(root, ...)
+    end
+
+    local children = root:GetChildren()
+    table.sort(children, sortFn or defaultSort)
+
+    for _, child in ipairs(children) do
+        results.Children[child] = InstanceManager.DeepExecute(child, exec, sortFn, multiRet, ...)
+    end
+
+    return results
+end
+
+function InstanceManager.AttributeExecute(inst: Instance, exec: (Instance, string, any) -> ...any?, sortFn: (string, string) -> boolean, multiRet: boolean) : { [string] : { any } }
+    local results = {}
+    local attributes = inst:GetAttributes()
+    local attributeArr = {}
+    for k, _ in pairs(attributes) do
+        attributeArr[#attributeArr+1] = k
+    end
+
+    table.sort(attributeArr, sortFn)
+    for _, attrName in ipairs(attributeArr) do
+        local attrValue = inst:GetAttribute(attrName)
+        if not multiRet then
+            results[attrName] = exec(inst, attrName, attrValue)
+        else
+            results[attrName] = { exec(inst, attrName, attrValue) }
+        end
+    end
+
+    return results
+end
+
+function InstanceManager.HasAttribute(inst, needle, isPattern)
+    for attrName, attrVal in pairs(inst:GetAttributes()) do
+        local isHit = false
+        if isPattern then
+            isHit = string.match(attrName, needle)
+        else
+            isHit = attrName == needle
+        end
+        if isHit then return true, attrName, attrVal end
+    end
+    return false, nil, nil
+end
+
+return InstanceManager]]></ProtectedString>
+				<string name="ScriptGuid">{ADF4C220-CF7F-40CD-8A5F-7936018EB507}</string>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+				<bool name="DefinesCapabilities">false</bool>
+				<string name="Name">InstanceManager</string>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+		</Item>
+		<Item class="Folder" referent="RBX4121F2F590BC4ECE81F42E472879B66B">
+			<Properties>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+				<bool name="DefinesCapabilities">false</bool>
+				<string name="Name">AttributeEval</string>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+			<Item class="ModuleScript" referent="RBXC00EB2DCF3DB4B32AF1A07C1E2185D69">
+				<Properties>
+					<Content name="LinkedSource"><null></null></Content>
+					<ProtectedString name="Source"><![CDATA[local GLUt = require("../Lib/GLUt")
+local LuaExpr = require("../Lib/LuaExpr")
+local SprixEnum = require("../Lib/EnumEngineer")
+local DebbieDebug = require("../Lib/DebbieDebug")
+
+local EvalResult = SprixEnum.new("AttributeEvalResult", {
+    NO_EVAL_NEEDED = 0,
+    EVAL_SUCCEEDED = 1,
+    EVAL_FAILED    = 2
+}, {
+    is_success = function(self) return self.Value < 2 end,
+    did_eval   = function(self) return self.Value ~= 0 end
+})
+
+local InstanceMan = require("../InstanceManager")
+local ShebangFuncs = require("../ShebangFuncs")
+local LuaExprFuncs = require("../LuaExprFuncs")
+
+local warnLogger = require("../Lib/Slogger").init{
+    postInit = table.freeze,
+    logFunc = warn
+}
+
+local warn = warnLogger.new("PrefabSystem", "AttributeEval")
+
+local AttributeEval = {}
+AttributeEval.NameInfo = require("./AttrNameInfo")
+AttributeEval.TypeHandlers = require("./AttrTypeHandlers")
+AttributeEval._DEBUG = false
+
+function AttributeEval.AttributeSort(attrName1, attrName2)
+    local attr1 = AttributeEval.NameInfo.GetInfo(attrName1)
+    local attr2 = AttributeEval.NameInfo.GetInfo(attrName2)
+
+    return attr1.Priority < attr2.Priority
+end
+
+function AttributeEval.SortedAttributes(attributes)
+    local sorted = {}
+    for k, v in pairs(attributes) do
+        sorted[#sorted+1] = k
+    end
+    table.sort(sorted, AttributeEval.AttributeSort)
+    return sorted
+end
+
+function AttributeEval.AttributeIsExpression(attrVal)
+    local shebangContents = attrVal:match("^#!/lua%s+(.+)$")
+    
+    local isExpr = true
+    local isShebang = shebangContents ~= nil
+    local isLuaExpr = LuaExpr.IsExpr(attrVal)
+
+    local warnMsg = nil
+    if not isShebang and not isLuaExpr then
+        isExpr = false
+        if attrVal:match("%$%(.*%)") then
+            warnMsg = "Potential expression detection failure false-negative"
+        end
+    end
+    
+    if isShebang and isLuaExpr then
+        isExpr = false
+        warnMsg = "Expression detection double-positive"
+    end
+    
+    if not isExpr then
+        return false, warnMsg, nil
+    else
+        return true, isLuaExpr, shebangContents
+    end
+end
+
+function AttributeEval.EvaluateAttributeValue(attrName, attrVal, makeFenv)
+    local warn = warn.specialize("EvaluateAttributeValue", attrName)
+
+    local success, value
+    
+    local isExpr, isLuaExpr, shebangContents = AttributeEval.AttributeIsExpression(attrVal)
+    if not isExpr then
+        return EvalResult.NO_EVAL_NEEDED, isLuaExpr
+    end
+    
+    local isShebang = not isLuaExpr
+
+    local fenv = makeFenv(isShebang, isLuaExpr)
+    if isLuaExpr then
+        success, value = LuaExpr.Eval(attrVal, fenv, nil, attrName)
+        if not success then
+            return EvalResult.EVAL_FAILED, value
+        end
+        return EvalResult.EVAL_SUCCEEDED, value
+    elseif isShebang then
+        local warn = warn.specialize("ShebangScript")
+        local success, count, retVals = GLUt.str_runlua(shebangContents, fenv, attrName)
+        if not success then
+            return EvalResult.EVAL_FAILED, count
+        end
+
+        if count > 1 then
+            warn("Multiple returns are not supported, will use first returned value")
+        elseif count < 1 then
+            warn("No value returned, return something to silence")
+        end
+
+        return EvalResult.EVAL_SUCCEEDED, retVals[1]
+    end
+
+    error("Critical error in attribute evaluation - this error should be unreachable")
+end
+
+function AttributeEval.EvaluateAttributeOn(element, attrName, evaluationState)
+    return AttributeEval.EvaluateAttributeValueOn(element, attrName, element:GetAttribute(attrName), evaluationState)
+end
+
+function AttributeEval.EvaluateAttributeValueOn(element, attrName, attrVal, evalState)
+    local instanceState = evalState.Instance
+    local staticState = evalState.Static
+    local globalState = evalState.Global
+    return AttributeEval.EvaluateAttributeValue(attrName, attrVal, function(isShebang, isLuaExpr) 
+        if isShebang then return ShebangFuncs.CreateShebangFenv(element, attrName, instanceState, staticState, globalState)
+        elseif isLuaExpr then return LuaExprFuncs.CreateExprFenv(element, attrName, instanceState, staticState, globalState)
+        else
+            error("Internal error: Attribute was neither a ShebangFunc or a LuaExpr")
+        end
+    end)
+end
+
+function AttributeEval.EvaluateProperty(on, propName, evalState)
+    return AttributeEval.EvaluateAttributeValueOn(on, `{on}.{propName}`, on[propName], evalState)
+end
+
+local function evalAndSetProp(on, propName, evalState)
+    local status, evalRes = AttributeEval.EvaluateProperty(on, propName, evalState)
+    if not status:is_success() then
+        warn(`Evaluation of {on}.{propName} "{on[propName]}" failed with {evalRes}`)
+    elseif not status:did_eval() then
+        if evalRes ~= nil then
+            warn(`Potential false-negative in determining execution viability? {evalRes}`)
+        end
+    elseif type(evalRes) ~= "string" then
+        warn(`{on}.{propName} \"{on[propName]}\" did not resolve to string value`)
+    else
+        on[propName] = evalRes
+    end
+end
+
+local function programmableRecurse(inst, evalState, watchForSet, pevalName)
+    local programmableOutput = {}
+    
+    local hasEvalLimit, _, evalLimit = InstanceMan.HasAttribute(inst, "peval%.EvalLimit$", true)
+    
+    if not hasEvalLimit or type(evalLimit) ~= "number" then
+        evalLimit = 2000
+    end
+
+    local i = 0
+    repeat
+        i = i + 1
+        local instClone = inst:Clone()
+        instClone.Parent = inst.Parent
+
+        local cloneEvalResults = AttributeEval.EvaluateAllRecurse(instClone, evalState, watchForSet, true)
+
+        local pDone = instClone:GetAttribute(pevalName)
+        instClone:SetAttribute(pevalName, nil)
+        if type(pDone) ~= "boolean" then
+            warn(`{inst.Parent}.{inst}`, `Malformed peval.Done expression - expected boolean, got {type(pDone)} - exiting recurse eval.`)
+            pDone = true
+        end
+
+        if pDone then
+            instClone:Destroy()
+        else
+            programmableOutput = GLUt.tbl_merge(programmableOutput, cloneEvalResults)
+        end
+    until pDone or i > evalLimit
+    inst:Destroy()
+
+    return programmableOutput
+end
+
+local function childSort(c1, c2)
+    if c1.Name == "InstanceBase" then return true end
+    if c2.Name == "InstanceBase" then return false end
+
+    local c1T = c1.ClassName
+    local c2T = c2.ClassName
+    if c1T == c2T then return false end
+    if c1T == "ValueBase" then return true end
+    if c2T == "ValueBase" then return false end
+    return c1.Name < c2.Name
+end
+
+function AttributeEval.EvaluateAllRecurse(
+    root           : Instance,
+    evalState      : { Instance: {}, Static: {}, Global: {} },
+    watchForSet    : { string },
+    noProgrammable : boolean
+)
+    watchForSet = GLUt.default(watchForSet, {})
+
+    local watchDict = {}
+    for _, v in ipairs(watchForSet) do
+        watchDict[v] = true
+    end
+
+    local watchResults = {}
+    local evalResults = InstanceMan.DeepExecute(root, function(instance)
+        DebbieDebug.globj_print(instance, `Evaluating attributes:`)
+        local deprecProgrammable, depProgName = InstanceMan.HasAttribute(instance, "ignore%.ProgrammableDone$", true)
+        if deprecProgrammable then
+            warn(`{instance.Parent.Parent}.{instance.Parent}.{instance} is using the deprecated ignore.ProgrammableDone attribute! Switch to peval.Done to silence`)
+            instance:SetAttribute("peval.Done", instance:GetAttribute(depProgName))
+            instance:SetAttribute(depProgName, nil)
+        end
+
+        local pevalPresent, pevalName, pevalVal = InstanceMan.HasAttribute(instance, "peval%.Done$", true)
+        if not noProgrammable and pevalPresent and type(pevalVal) == "string" then
+            return programmableRecurse(instance, evalState, watchForSet, pevalName)
+        end
+
+        InstanceMan.AttributeExecute(instance, function(instance, attrName, attrValue)
+            local displayAttrVal = tostring(attrValue):gsub("\n", " ")
+            if #displayAttrVal > 32 then
+                displayAttrVal = displayAttrVal:sub(1, 26)
+                displayAttrVal = displayAttrVal .. " (...)"
+            end
+            
+            local attrInfo = AttributeEval.NameInfo.GetInfo(attrName)
+
+            local attrType = type(attrValue)
+            
+            local attrIsStandard = not attrInfo.ScopeInfo.IsSpecial
+            if attrIsStandard and (attrType ~= "string" or not AttributeEval.AttributeIsExpression(attrValue)) then
+                DebbieDebug.globj_print(instance, `\tAttribute {attrName} [{displayAttrVal}] does not require evaluation, skipping...`)
+                return nil
+            end
+            
+            local success, newValue
+            if attrType == "string" then
+                DebbieDebug.globj_print(instance, `Attribute {attrName} [{displayAttrVal}] is undergoing evaluation...`)
+                success, newValue = AttributeEval.EvaluateAttributeOn(instance, attrName, evalState)
+            else
+                success, newValue = true, attrValue
+            end
+
+            if not success then
+                warn("\tFunction execution failed", newValue, "Attribute will be discarded")
+                instance:SetAttribute(attrName, nil)
+                return nil
+            end
+
+            local priorityStripped = attrInfo:NameNoPriority()
+            if watchDict[priorityStripped] then
+                watchResults[instance] = watchResults[instance] or {}
+                watchResults[instance][priorityStripped] = newValue
+            end
+
+            DebbieDebug.globj_print(instance, `Attribute {attrName} belongs to type {attrInfo.Scope} - Handing off to appropriate handler`)
+            local success, failReason = AttributeEval.TypeHandlers[attrInfo.Scope](instance, attrInfo, newValue)
+            if not success then
+                warn(`\tType handler failed with {failReason}`)
+            end
+            
+        end, AttributeEval.AttributeSort)
+
+        evalAndSetProp(instance, "Name", evalState)
+        
+        if not instance:IsA("StringValue") then return end
+        evalAndSetProp(instance, "Value", evalState)
+    end, childSort, false)
+
+    return evalResults
+end
+
+return AttributeEval]]></ProtectedString>
+					<string name="ScriptGuid">{037FACE2-FF86-4CB4-9537-2485B947BA31}</string>
+					<BinaryString name="AttributesSerialize"></BinaryString>
+					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+					<bool name="DefinesCapabilities">false</bool>
+					<string name="Name">Main</string>
+					<int64 name="SourceAssetId">-1</int64>
+					<BinaryString name="Tags"></BinaryString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBXBF3C8C12B30D4591803D3D556EADCDF4">
+				<Properties>
+					<Content name="LinkedSource"><null></null></Content>
+					<ProtectedString name="Source"><![CDATA[local glut = require("../Lib/GLUt")
+local multiPatterns = require("../Lib/MultiPatterns")
+
+local warnLogger = require("../Lib/Slogger").init{
+    postInit = table.freeze,
+    logFunc = warn
+}
+
+local warn = warnLogger.new("PrefabSystem", "AttrNameInfo")
+
+local AttrNameInfo = {}
+AttrNameInfo.Patterns = {}
+
+local priorityPatterns = {
+    NUMERIC = "^(%d+)%.",
+    HIGHP_DEPRECATED = "^highp%.",
+    LOWP_DEPRECATED  = "^lowp."
+}
+AttrNameInfo.Patterns.Priority = priorityPatterns
+
+local PRIORITY_RANGE_MAJOR = 128
+local PRIORITY_RANGE_MINOR = 1 / PRIORITY_RANGE_MAJOR
+local function newPriorityLevel(major)
+    return function(minor)
+        return (major * PRIORITY_RANGE_MAJOR) + (minor * PRIORITY_RANGE_MINOR)
+    end
+end
+
+local DEBUG_PRIORITY_LEVEL   = newPriorityLevel(1) -- Priority of debug type attributes
+local EXEC_PRIORITY_LEVEL    = newPriorityLevel(2) -- Priority of exec type attributes
+local ORDERED_PRIORITY_LEVEL = newPriorityLevel(3) -- Priority of attributes with an explicit ordering
+local STD_PRIORITY_LEVEL     = newPriorityLevel(4) -- Priority of unordered attributes
+local THIS_PRIORITY_LEVEL    = newPriorityLevel(5) -- Priority of this type attributes
+
+local function newScope(tbl: { Name: string, PriorityLevel: (number) -> number, PriorityPattern: string?, ScopePattern: string?, TargetPattern: string?, IsSpecial: boolean? })
+    tbl.PriorityPattern = glut.default(tbl.PriorityPattern, priorityPatterns.NUMERIC)
+    tbl.ScopePattern    = glut.default(
+                                       tbl.ScopePattern,
+                                       multiPatterns.concat(`^{tbl.Name}%.`, `%.{tbl.Name}%.`)
+                                      )
+    tbl.TargetPattern   = glut.default(tbl.TargetPattern  , `[^%.]+$`)
+    tbl.IsSpecial       = glut.default(tbl.IsSpecial, true)
+    return tbl
+end
+
+local SCOPES = {
+    THIS          = newScope{
+                              Name = "this",
+                              PriorityLevel = THIS_PRIORITY_LEVEL
+                            },
+    EXEC          = newScope{
+                              Name = "exec",
+                              PriorityLevel = EXEC_PRIORITY_LEVEL
+                            },
+    IGNORE        = newScope{ Name = "ignore" },
+    PEVAL         = newScope{ Name = "peval" },
+    NOIMP         = newScope{ Name = "noimp" },
+    IMPONLY       = newScope{ Name = "imponly" },
+    DEBUG         = newScope{ 
+                              Name = "debug",
+                              PriorityLevel = DEBUG_PRIORITY_LEVEL
+                            },
+    ["@STANDARD"] = newScope{
+                              Name          = "@standard",
+                              ScopePattern  = multiPatterns.concat("^%d+%.[^%.]+$", "^[^%.]+$"),
+                              IsSpecial     = false
+                            },
+}
+AttrNameInfo.Scopes = SCOPES
+
+function AttrNameInfo.GetTarget(attrName, attrScope)
+    attrScope = attrScope or AttrNameInfo.GetScope(attrName)
+    return string.match(attrName, SCOPES[attrScope].TargetPattern)
+end
+
+function AttrNameInfo.GetPriority(attrName, attrScope)
+    attrScope = attrScope or AttrNameInfo.GetScope(attrName)
+
+    local warn = warn.specialize("GetPriority", attrName)
+
+    local defaultPriorityLevel = SCOPES[attrScope].PriorityLevel or STD_PRIORITY_LEVEL
+
+    local pattern = SCOPES[attrScope].PriorityPattern
+    if pattern == false then
+        return defaultPriorityLevel(0)
+    end
+
+    local numP = string.match(attrName, pattern)
+    if numP then
+        return ORDERED_PRIORITY_LEVEL(tonumber(numP))
+    end
+
+    local highP = string.match(attrName, priorityPatterns.HIGHP_DEPRECATED)
+    local lowP  = string.match(attrName, priorityPatterns.LOWP_DEPRECATED)
+    if not highP and not lowP then
+        return defaultPriorityLevel(1)
+    end
+
+    warn("Using deprecated highp/lowp syntax, replace with numeric priority to silence")
+    if highP then
+        return defaultPriorityLevel(0)
+    elseif lowP then
+        return defaultPriorityLevel(2)
+    end
+end
+
+local function isMatch(s, m)
+    local mType = type(m)
+    local mRes
+    if mType == "table" then
+        mRes = m:match(s)
+    elseif mType == "string" then
+        mRes = s:match(m)
+    else
+        error("ScopePattern of invalid type")
+    end
+    return mRes ~= nil, mRes
+end
+
+local DEBUG_TYPES = {}
+function AttrNameInfo.GetScope(attrName)
+    local warn = warn.specialize("GetScope", attrName)
+
+    local lastResort = nil
+
+    local scope = nil
+    for scopeName, scopeInfo in pairs(SCOPES) do
+        local doDebug = table.find(DEBUG_TYPES, scopeName)
+        
+        if scopeInfo.ScopePattern == false then continue end
+        if (not scopeInfo.IsSpecial) then lastResort = scopeName continue end
+
+        local isMatch, matchRes = isMatch(attrName, scopeInfo.ScopePattern)
+        if doDebug then
+            print(`[ScopeClassify/{scopeName}] {attrName} - {isMatch} - {matchRes}`)
+        end
+        
+        if isMatch and scope ~= nil then
+            warn("More than one attribute scope provided")
+        elseif isMatch then
+            scope = scopeName
+        end
+    end
+
+    if scope then return scope end
+
+    for scopeName, scopeInfo in pairs(SCOPES) do
+        if scopeInfo.ScopePattern == false then continue end
+        if scopeInfo.IsSpecial then continue end
+
+        local isMatch = isMatch(attrName, scopeInfo.ScopePattern)
+        if isMatch then
+            scope = scopeName
+            break
+        end
+    end
+
+    if scope == nil and lastResort == nil then
+        warn(`Attribute {attrName} does not belong to any attribute type! Will default to @STANDARD`)
+        return SCOPES["@STANDARD"].Name
+    end
+
+    return scope or lastResort
+end
+
+
+local attrInfo = {}
+function attrInfo:IsScope(scope)
+    return self.Scope:lower() == scope:lower()
+end
+
+function attrInfo:NameNoPriority()
+    local raw = self.Raw
+    for _, priorityPattern in priorityPatterns do
+        raw = string.gsub(raw, priorityPattern, "")
+    end
+    return raw
+end
+
+attrInfo.__index = attrInfo
+attrInfo.__tostring = function(self)
+    return `{self.Raw} -> \{ Target: {self.Target}, Priority: {self.Priority}, Scope: {self.Scope} }`
+end
+
+function AttrNameInfo.GetInfo(attrName)
+    local scope = AttrNameInfo.GetScope(attrName)
+    local scopeInfo = SCOPES[scope]
+    return setmetatable({
+        Target    = AttrNameInfo.GetTarget(attrName, scope),
+        Priority  = AttrNameInfo.GetPriority(attrName, scope),
+        Scope     = scope,
+        ScopeInfo = scopeInfo,
+        Raw       = attrName
+    }, attrInfo)
+end
+
+return AttrNameInfo]]></ProtectedString>
+					<string name="ScriptGuid">{A87FDBDB-1EE1-4446-8CC7-D20EC71A4579}</string>
+					<BinaryString name="AttributesSerialize"></BinaryString>
+					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+					<bool name="DefinesCapabilities">false</bool>
+					<string name="Name">AttrNameInfo</string>
+					<int64 name="SourceAssetId">-1</int64>
+					<BinaryString name="Tags"></BinaryString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBXD6DA9399F805470491131DDB82008E5C">
+				<Properties>
+					<Content name="LinkedSource"><null></null></Content>
+					<ProtectedString name="Source"><![CDATA[local DEBUGGING_ATTRS = setmetatable({}, {__mode='k'})
+local DebbieDebug = require("../Lib/DebbieDebug")
+
+local function debug_print(t, inst, attrInfo, value, msg)
+    if DEBUGGING_ATTRS[inst] == nil then return end
+    if DEBUGGING_ATTRS[inst][attrInfo.Raw] ~= true then return end
+    local msgFull = `ATTR_DEBUG/{t} : {inst.Parent}.{inst}@{attrInfo.Raw} : {inst:GetAttribute(attrInfo.Raw)} : Evaluated to {value}`
+    if msg ~= nil then msgFull = msgFull .. ` : {msg}` end
+    warn(msgFull)
+end
+
+local function delete_attr(inst, name)
+    inst:SetAttribute(name, nil)
+end
+
+local function move_and_set_attr(inst, from, to, value)
+    delete_attr(inst, from)
+    inst:SetAttribute(to  , value)
+end
+
+return {
+    DEBUG = function(inst, attrInfo, value)
+        delete_attr(inst, attrInfo.Raw)
+        
+        if attrInfo.Target == "this" then
+            DebbieDebug.set_obj_deb(inst, true)
+            return
+        end
+        
+        local targetValid = inst:GetAttribute(attrInfo.Target) ~= nil
+        local valueValid  = type(value) == "boolean"
+        if not targetValid then
+            return false, `{attrInfo.Raw} is invalid! Debug target {attrInfo.Target} does not exist on {inst.Parent}.{inst}`
+        elseif not valueValid then
+            return false, `{attrInfo.Raw} is invalid! Debug setting {value} is not a boolean!`
+        end
+        
+        DEBUGGING_ATTRS[inst] = DEBUGGING_ATTRS[inst] or {}
+        DEBUGGING_ATTRS[inst][attrInfo.Target] = value
+        
+        DEBUGGING_ATTRS[inst][attrInfo.Raw] = true
+        debug_print("DEBUG", inst, attrInfo, value, `Setting {attrInfo.Raw}'s Debug flag to {value}`)
+        DEBUGGING_ATTRS[inst][attrInfo.Raw] = nil
+        
+        return true, nil
+    end,
+    THIS = function(inst, attrInfo, value)
+        debug_print("IGNORE", inst, attrInfo, value, `Discarding {attrInfo.Raw} & Setting ({inst}.{attrInfo.Target} = {value})`)
+        delete_attr(inst, attrInfo.Raw)
+        return pcall(function()
+            inst[attrInfo.Target] = value
+        end)
+    end,
+    EXEC = function(inst, attrInfo, value)
+        debug_print("EXEC", inst, attrInfo, value, "Discarding of attribute")
+        delete_attr(inst, attrInfo.Raw)
+        return true, nil
+    end,
+    IGNORE = function(inst, attrInfo, value)
+        warn(`{inst.Parent}.{inst} is using deprecated "ignore" attribute type - swap to "exec" to silence`)
+        debug_print("IGNORE", inst, attrInfo, value, "Discarding of attribute")
+        delete_attr(inst, attrInfo.Raw)
+        return true, nil
+    end,
+    PEVAL = function(inst, attrInfo, value)
+        debug_print("PEVAL", inst, attrInfo, value, "Discarding of attribute")
+        inst:SetAttribute(attrInfo.Raw, value)
+        return true, nil
+    end,
+    IMPONLY = function(inst, attrInfo, value)
+        debug_print("IMPONLY", inst, attrInfo, value, "Discarding of attribute")
+        delete_attr(inst, attrInfo.Raw)
+        return true, nil
+    end,
+    NOIMP = function(inst, attrInfo, value)
+        debug_print("NOIMP", inst, attrInfo, value, `Setting ({attrInfo.Target} = {value})`)
+        move_and_set_attr(inst, attrInfo.Raw, attrInfo.Target, value)
+        return true, nil
+    end,
+    ["@STANDARD"] = function(inst, attrInfo, value)
+        debug_print("STANDARD", inst, attrInfo, value, `Setting ({attrInfo.Target} = {value})`)
+        move_and_set_attr(inst, attrInfo.Raw, attrInfo.Target, value)
+        return true, nil
+    end,
+}]]></ProtectedString>
+					<string name="ScriptGuid">{D6C86CC2-2075-437E-9895-8DDC87D84446}</string>
+					<BinaryString name="AttributesSerialize"></BinaryString>
+					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+					<bool name="DefinesCapabilities">false</bool>
+					<string name="Name">AttrTypeHandlers</string>
+					<int64 name="SourceAssetId">-1</int64>
+					<BinaryString name="Tags"></BinaryString>
+				</Properties>
+			</Item>
+		</Item>
+		<Item class="Folder" referent="RBXCBCED561F83540988DD87A403727454E">
+			<Properties>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+				<bool name="DefinesCapabilities">false</bool>
+				<string name="Name">Lib</string>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+			<Item class="ModuleScript" referent="RBXFBEEB8894D0B4973AAA0789EEEFC1988">
+				<Properties>
+					<Content name="LinkedSource"><null></null></Content>
+					<ProtectedString name="Source"><![CDATA[--[[
+    This module is provided for convenience of consumers of the serializer API
+    providing a reference implementation for correctly retrieving and validating a reference to the API table
+
+    For a working example of a plugin making use of this API via this module
+    see: https://github.com/Sprixitite/InfiltrationEngine-PrefabSystem
+]]
+
+local coreGui = game:GetService("CoreGui")
+
+export type Token = string
+export type Hook = (...any) -> nil
+export type HookType = "APIExtensionLoaded"|"APIExtensionUnloaded"|"PreSerialize"|"PreSerializeMissionSetup"|"SerializerUnloaded"
+export type APIExtension = { [string] : (...any) -> ...any }
+
+export type APIReference = {
+    -- Generic
+    GetAPIVersion 			: () -> number,
+    GetCodeVersion 			: () -> number,
+    GetAttributesMap 		: () -> { [string] : { [number] : any } },
+    GetAttributeTypes 		: () -> { [string] : number },
+    GetRegistrantFactory	: (author: string, plugin: string) -> ((hookName: string) -> string), 
+
+    -- HookTypes
+    GetHookTypes 			: () -> { [number] : string },
+    IsHookTypeValid 		: (hookType: string, warnCaller: string?) -> boolean,
+
+    -- Hooks
+    AddHook 				: (hookType: HookType, registrant: string, hook: Hook, hookState: {any}?) -> Token,
+    RemoveHook 				: (token: Token) -> nil,
+
+    -- APIExtensions
+    AddAPIExtension 		: (name: string, author: string, contents: APIExtension) -> Token,
+    GetAPIExtension			: (name: string, author: string) -> APIExtension,
+    RemoveAPIExtension		: (token: Token) -> nil
+}
+
+type AnyTbl = { [string] : any }
+
+local APIConsumer = {}
+
+local function ValidateArgTypes(fname: string, ...) : boolean
+    local args = {...}
+    for _, argSettings in ipairs(args) do
+        local argName = argSettings[1]
+        local argValue = argSettings[2]
+        local argType = type(argValue)
+        local argExpectedType = argSettings[3]
+        if argType ~= argExpectedType then
+            warn(`Invalid argument {argName} passed to function {fname} - expected type {argExpectedType} but got {argType}!`)
+            return false
+        end
+    end
+    return true
+end
+
+APIConsumer.ValidateArgTypes = ValidateArgTypes
+
+-- Yields until timeOut is elapsed or API is found
+APIConsumer.WaitForAPI = function(timeOut: number?) : APIReference?
+    timeOut = if timeOut == nil then math.huge else timeOut
+
+    if not ValidateArgTypes(
+        "WaitForAPI",
+        {"timeOut", timeOut, "number"}
+        ) then return end
+
+    local presenceIndicator = coreGui:WaitForChild("InfilEngine_SerializerAPIAvailable", timeOut)
+    if not presenceIndicator then return end
+
+    local apiTbl = shared.InfilEngine_SerializerAPI
+    if not (tostring(apiTbl) == presenceIndicator.Value) then return end
+
+    return apiTbl
+end
+
+-- Attempt to get the API without blocking - returns false + nil if unavailable, otherwise returns true + APIReference
+APIConsumer.TryGetAPI = function() : (boolean, APIReference?)
+    local presenceIndicator = coreGui:FindFirstChild("InfilEngine_SerializerAPIAvailable")
+    if not presenceIndicator then return false, nil end
+
+    local apiTbl = shared.InfilEngine_SerializerAPI
+    if not (tostring(apiTbl) == presenceIndicator.Value) then return false, nil end
+
+    return true, apiTbl
+end
+
+-- Never returns unless there's an error
+-- Continually wires up handling of serializer load/unload as well as unloading of consumer plugin as needed
+-- Avoid doing this yourself if you can help it
+APIConsumer.DoAPILoop = function<StateT>(
+    callerPlugin: Plugin,
+    srcname: string,
+    loadedClbck: (api: APIReference, state: StateT) -> nil,
+    unloadedClbck: (api: APIReference, state: StateT) -> nil, 
+    state: StateT?
+)
+    state = if state == nil then {} else state
+
+    if typeof(callerPlugin) ~= "Instance" then
+        warn(`Invalid argument callerPlugin passed to DoAPILoop - expected type Plugin but got {typeof(callerPlugin)}!`)
+        return
+    end
+
+    if callerPlugin.ClassName ~= "Plugin" then
+        warn(`Invalid argument callerPlugin passed to DoAPILoop - expected type Plugin but got {callerPlugin.ClassName}!`)
+        return
+    end
+
+    if not ValidateArgTypes(
+        "DoAPILoop", 
+        {"srcname", srcname, "string"},
+        {"loadedClbck", loadedClbck, "function"},
+        {"unloadedClbck", unloadedClbck, "function"},
+        {"state", state, "table"}
+        ) then return end
+
+    local api = APIConsumer.WaitForAPI()
+    if api == nil then return APIConsumer.DoAPILoop(callerPlugin, srcname, loadedClbck, unloadedClbck, state) end
+
+    loadedClbck(api, state)
+
+    local unloadedCallback = Instance.new("BindableEvent")
+    local pluginUnloadCallback
+    local unloadToken
+
+    pluginUnloadCallback = callerPlugin.Unloading:Connect(function()
+        pluginUnloadCallback:Disconnect()
+        pluginUnloadCallback = nil
+        unloadedClbck(api, state)
+        if unloadToken ~= nil then api.RemoveHook(unloadToken) end
+    end)
+
+    unloadToken = api.AddHook("SerializerUnloaded", `APIConsumerFramework_{srcname}`, function()
+        unloadedCallback:Fire()
+        if pluginUnloadCallback then pluginUnloadCallback:Disconnect() pluginUnloadCallback = nil end
+        unloadedClbck(api, state)
+    end)
+
+    unloadedCallback.Event:Wait()
+    unloadedCallback:Destroy()
+    APIConsumer.DoAPILoop(callerPlugin, srcname, loadedClbck, unloadedClbck, state)
+end
+
+return APIConsumer]]></ProtectedString>
+					<string name="ScriptGuid">{F582D471-C7B1-4632-81F6-219918537D43}</string>
+					<BinaryString name="AttributesSerialize"></BinaryString>
+					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+					<bool name="DefinesCapabilities">false</bool>
+					<string name="Name">APIConsumer</string>
+					<int64 name="SourceAssetId">-1</int64>
+					<BinaryString name="Tags"></BinaryString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX22040C3489514B62992AEBBEFF6F3878">
+				<Properties>
+					<Content name="LinkedSource"><null></null></Content>
+					<ProtectedString name="Source"><![CDATA[--[[
+    DebbieDebug // Debug module with granular per-object debugging control
+
+    © Sprixitite, 2026
+]]
+
+local DebbieDebug = {}
+DebbieDebug.IsGlobalDebug = false
+DebbieDebug.IsGlobalDebugFN = nil
+
+function DebbieDebug.init(fIsGlobalDebug, noFail)
+    if DebbieDebug.IsGlobalDebugFN ~= nil and not noFail then
+        error("Attempt to initialize DebbieDebug twice!")
+    elseif DebbieDebug.IsGlobalDebugFN then
+        return DebbieDebug.refresh()
+    end
+    DebbieDebug.IsGlobalDebugFN = fIsGlobalDebug
+end
+
+function DebbieDebug.refresh()
+    DebbieDebug.IsGlobalDebug = DebbieDebug.IsGlobalDebugFN()
+end
+
+function DebbieDebug.print(...)
+    if not DebbieDebug.IsGlobalDebug then return end
+    print(...)
+end
+
+function DebbieDebug.warn(...)
+    if not DebbieDebug.IsGlobalDebug then return end
+    warn(...)
+end
+
+local function isObjectType(o)
+    local oType = type(o)
+    return oType == "table" or oType == "userdata"
+end
+
+local function debbieTostring(o)
+    local tostringFn
+
+    local oMeta = getmetatable(o)
+    if oMeta then
+        tostringFn = oMeta["@debbietostring"] or tostring
+    else
+        tostringFn = tostring
+    end
+
+    return tostringFn(o)
+end
+
+local debuggingObjects = setmetatable({}, {__mode = 'k'})
+function DebbieDebug.set_obj_deb(obj, to)
+    if not isObjectType(obj) then
+        error("[DebbieDebug] Attempt to enable debugging for value type \"" .. tostring(obj) .. "\"")
+    end
+    debuggingObjects[obj] = to
+end
+
+function DebbieDebug.get_obj_deb(obj)
+    if not isObjectType(obj) then
+        warn("[DebbieDebug] Attempt to check debug flag for value type \"" .. tostring(obj) .. "\"")
+    end
+    return debuggingObjects[obj]
+end
+
+function DebbieDebug.obj_print(obj, ...)
+    if not DebbieDebug.get_obj_deb(obj) then return end
+    print(
+        debbieTostring(obj),
+        ...
+    )
+end
+
+function DebbieDebug.obj_warn(obj, ...)
+    if not DebbieDebug.get_obj_deb(obj) then return end
+    warn(
+        debbieTostring(obj),
+        ...
+    )
+end
+
+function DebbieDebug.globj_print(obj, ...)
+    if not (DebbieDebug.IsGlobalDebug or DebbieDebug.get_obj_deb(obj)) then return end
+    print(
+        debbieTostring(obj),
+        ...
+    )
+end
+
+function DebbieDebug.globj_warn(obj, ...)
+    if not (DebbieDebug.IsGlobalDebug or DebbieDebug.get_obj_deb(obj)) then return end
+    warn(
+        debbieTostring(obj),
+        ...
+    )
+end
+
+return DebbieDebug]]></ProtectedString>
+					<string name="ScriptGuid">{1DF5A549-949B-4DDF-8D37-7745DD9BE32A}</string>
+					<BinaryString name="AttributesSerialize"></BinaryString>
+					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+					<bool name="DefinesCapabilities">false</bool>
+					<string name="Name">DebbieDebug</string>
+					<int64 name="SourceAssetId">-1</int64>
+					<BinaryString name="Tags"></BinaryString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBXC195CBD7B6A2498A920BA14F28C2A98F">
+				<Properties>
+					<Content name="LinkedSource"><null></null></Content>
+					<ProtectedString name="Source"><![CDATA[--[[
+    EnumEngineer // Native Lua Rich Enum Module
+    Enum items may contain arbitrary data, as well as be assigned methods
+
+    Tested to be compatible with Lua5.1
+    Presumed to be compatible with Lua5.2-5.5/LuaJIT
+
+    © Sprixitite, 2026
+]]
+
+local function tblClone(tbl)
+    local cloned = {}
+    for k, v in pairs(tbl) do
+        if type(v) ~= "table" then
+            cloned[k] = v
+        else
+            cloned[k] = tblClone(v)
+        end
+    end
+    return cloned
+end
+
+local function weakTbl(k, v)
+    local modeStr = ((k and v) and "kv") or (k and 'k') or (v and 'v') or nil
+    return setmetatable({}, {__mode=modeStr})
+end
+
+local EnumEngineer = {}
+local newproxyAvailable = (_VERSION == "Luau" or _VERSION == "Lua 5.1")
+
+local enumData = {}
+
+local _enumData = weakTbl(true, false)
+function enumData.new(obj, name, items, itemMethods, sealed)
+    local itemsList = {}
+
+    local itemCount = 0
+    for _, _ in pairs(items) do itemCount = itemCount + 1 end
+    _enumData[obj] = {
+        Name = name,
+        ItemsDict = items,
+        ItemMethods = itemMethods,
+        ItemCount = itemCount,
+        Sealed = sealed
+    }
+end
+
+function enumData.get(enum)
+    return _enumData[enum]
+end
+
+function enumData.add_item(enum, enumItem)
+    local data = enumData.get(enum)
+    data.ItemCount = data.ItemCount + 1
+    data.ItemsDict[enumItem.Name] = enumItem
+end
+
+local enumItem = {}
+
+function enumItem.new(itemEnum, itemId, itemName, itemValue, itemMeta)
+    if type(itemValue) ~= "table" then
+        return setmetatable(
+            { Id = itemId, Name = itemName, Value = itemValue, Enum = itemEnum },
+            itemMeta
+        )
+    else
+        return setmetatable(
+            { Id = itemId, Name = itemName, Value = tblClone(itemValue), Enum = itemEnum },
+            itemMeta
+        )
+    end
+end
+
+function enumItem.fromDict(enum, items, itemMeta)
+    local wrapped = {}
+    local i = 0
+    for name, value in pairs(items) do
+        i = i + 1
+        wrapped[i] = enumItem.new(enum, i, name, value, itemMeta)
+    end
+    return wrapped
+end
+
+function enumItem.newMeta(methods)
+    return {
+        __index = enumItem.__index,
+        __newindex = enumItem.__newindex,
+        __tostring = enumItem.__tostring,
+        ItemMethods = methods
+    }
+end
+
+function enumItem.__index(t, k)
+    if type(k) == "string" then
+        -- MyEnum.nAmE -> MyEnum.Name
+        local caseKey = k:sub(1, 1):upper() .. k:sub(2, -1):lower()
+        local caseVal = rawget(t, caseKey)
+        if caseVal ~= nil then return caseVal end
+    end
+    local itemMethods = getmetatable(t).ItemMethods
+    return itemMethods[k]
+end
+
+function enumItem.__newindex(t, k, v)
+    error("Attempt to set \"" .. tostring(k) .. " = " .. tostring(v) .. "\" on ")
+end
+
+function enumItem.__tostring(t)
+    local enumName = enumData.get(rawget(t, "Enum")).Name
+
+    local selfName = rawget(t, "Name")
+    local selfId   = rawget(t, "Id")
+    local selfVal  = rawget(t, "Value")
+    return "Enum \"" .. enumName .. "\" / EnumItem \"" .. selfName .. "\" { Id = " .. tostring(selfId) .. ", Value = " .. tostring(selfVal) .. " }"
+end
+
+local function enumNewIndex(t, k, v)
+    error("Attempt to set \"" .. tostring(k) .. " = " .. tostring(v) .. "\" on enum \"" .. EnumEngineer.get_name(t) .. "\"")
+end
+
+local function enumIndex(t, k)
+    local enumItems = enumData.get(t).ItemsDict
+    local queriedItem = enumItems[k]
+    if queriedItem ~= nil then
+        return queriedItem
+    end
+    local enumMethod = EnumEngineer[k]
+    if enumMethod == EnumEngineer.new then
+        return nil
+    end
+
+    if enumMethod == nil then
+        error(
+            "Attempted to index Enum for \"" .. tostring(k) .. "\" but no such EnumItem or Method exists!\n" .. 
+                "Enum is as follows: " .. tostring(t)
+        )
+    end
+    return enumMethod
+end
+
+local function enumLen(t)
+    return enumData.get(t).ItemCount
+end
+
+local function enumTostring(t)
+    local i = 0
+    local n = #t
+    local enumItems = enumData.get(t).ItemsDict
+
+    local strRep = "Enum \"" .. EnumEngineer.get_name(t) .. "\" { "
+    for k, _ in pairs(enumItems) do
+        i = i + 1
+        strRep = strRep .. tostring(k)
+        if i < n then
+            strRep = strRep .. ", "
+        end
+    end
+
+    return strRep .. " }"
+end
+
+local function newEnum(name, itemMethods)
+    local enumMeta
+
+    local enumObj
+    if newproxyAvailable then
+        enumObj = newproxy(true)
+        enumMeta = getmetatable(enumObj)
+    else
+        enumObj = {}
+        enumMeta = {}
+        setmetatable(enumObj, enumMeta)
+    end
+
+    enumMeta.__index    = enumIndex
+    enumMeta.__newindex = enumNewIndex
+    enumMeta.__len      = enumLen
+    enumMeta.__tostring = enumTostring
+
+    enumData.new(enumObj, name, {}, itemMethods, false)
+
+    return enumObj
+end
+
+function EnumEngineer.new(name, items, itemMethods)
+    items = items or {}
+
+    local enumObj = newEnum(name, itemMethods)
+
+    for name, value in pairs(items) do
+        enumObj:add(name, value)
+    end
+
+    return enumObj
+end
+
+function EnumEngineer.add(enum, name, value)
+    local valid, enum_data = EnumEngineer.is_enum(enum)
+    if not valid then error("First argument to EnumEngineer.add must be an Enum!") end
+
+    if enum_data.enumSeal then
+        error("Attempt to add Enum Item to Sealed Enum \"" .. tostring(enum) .. "\"")
+    end
+
+    local newItem = enumItem.new(enum, enum_data.ItemCount+1, name, value, enumItem.newMeta(enum_data.ItemMethods))
+    enumData.add_item(enum, newItem)
+end
+
+function EnumEngineer.seal(enum)
+    if enum:is_sealed() then return end
+    enumData.get(enum).enumSeal = true
+    return enum
+end
+
+function EnumEngineer.is_sealed(enum)
+    local valid, data = EnumEngineer.is_enum(enum)
+    if not valid then
+        error("Attempted to check Enum Seal of Non-Enum value \"" .. tostring(enum) .. "\"!")
+    end
+    return enumData.get(enum).enumSeal
+end
+
+function EnumEngineer.is_enum(enum)
+    local enumData = enumData.get(enum)
+    return enumData ~= nil, enumData
+end
+
+function EnumEngineer.get_name(enum)
+    local valid, data = EnumEngineer.is_enum(enum)
+    if not valid then
+        error("Attempted to get Enum Name of Non-Enum value \"" .. tostring(enum) .. "\"!")
+    end
+    return data.Name
+end
+
+function EnumEngineer.item_exists(enum, itemName)
+    local valid, data = EnumEngineer.is_enum(enum)
+    if not valid then
+        error("Attempted to get EnumItem of Non-Enum value \"" .. tostring(enum) .. "\"!")
+    end
+    local item = data.ItemsDict[itemName]
+    return item ~= nil, item
+end
+
+return EnumEngineer]]></ProtectedString>
+					<string name="ScriptGuid">{BC97DAA8-3822-406C-9F89-A31598BCF03A}</string>
+					<BinaryString name="AttributesSerialize"></BinaryString>
+					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+					<bool name="DefinesCapabilities">false</bool>
+					<string name="Name">EnumEngineer</string>
+					<int64 name="SourceAssetId">-1</int64>
+					<BinaryString name="Tags"></BinaryString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBXB765CEC3BD7348478F92EC7EE1800D89">
+				<Properties>
+					<Content name="LinkedSource"><null></null></Content>
+					<ProtectedString name="Source"><![CDATA[--[[
+    GLUt // GoodLuaUtilities // Lua5.1 utilities module
+    
+    © Sprixitite, 2026
+]]
+
+local GLUt = {}
+
+local GLUtCfg = {
+    print = print,
+    warn  = function(...) print("WARNING", ...) end,
+    error = error,
+    type  = type
+}
+
+local patternSpecChars = { '(', ')', '.', '%', '+', '-', '*', '?', '[', ']', '^', '$' }
+
+GLUt.severity = {
+    SILENT = 0,
+    LOG = 1,
+    WARN = 2,
+    ERR = 3,
+    ERROR = 3
+}
+
+local function severity_warn(sev, ...)
+    if sev == GLUt.severity.SILENT then return end
+    local warn_fn
+    if sev == GLUt.severity.LOG then
+        warn_fn = GLUtCfg.print
+    elseif sev == GLUt.severity.WARN then
+        warn_fn = GLUtCfg.warn
+    else
+        warn_fn = GLUtCfg.error
+    end
+    warn_fn(...)
+end
+
+function GLUt.configure(tbl)
+    for k, v in pairs(tbl) do
+        if GLUtCfg[k] ~= nil then
+            GLUtCfg[k] = v
+        else
+            GLUtCfg.warn("Attempt to set invalid GLUtCfg Key \"" .. tostring(k) .. "\"")
+        end
+    end
+end
+
+function GLUt.custom_iter(tbl, keys)
+    local i = 0
+    return function()
+        i = i + 1
+        local requested = {}
+        local iTbl = tbl[i]
+        if iTbl == nil then return nil end
+        for ki, k in ipairs(keys) do
+            requested[ki] = iTbl[k]
+        end 
+        return i, unpack(requested)
+    end
+end
+
+function GLUt.custom_iter_template(...)
+    local varargs = { ... }
+    return function(tbl) return GLUt.custom_iter(tbl, varargs) end
+end
+
+function GLUt.default(arg, default)
+    return (arg == nil) and default or arg
+end
+
+function GLUt.default_exec(arg, fn)
+    return (arg == nil) and fn() or arg
+end
+
+function GLUt.default_bounds(arg, default, min, max)
+    if arg == nil then return default end
+    if arg < min then return default end
+    if max < arg then return default end
+    return arg
+end
+
+function GLUt.default_typed(arg, default, argName, funcName)
+    local argType = GLUtCfg.type(arg)
+    local defaultType = GLUtCfg.type(default)
+    if argType == defaultType then return arg end
+    if argType == "nil" then return default end
+    GLUt.type_warn(argName, funcName, defaultType, argType)
+    return default
+end
+
+function GLUt.type_warn(argName, funcName, expected, got, severity)
+    if argName == nil or expected == got then return end
+    if type(severity) == "boolean" then
+        severity = severity and GLUt.severity.ERROR or GLUt.severity.WARN 
+    end
+    severity = GLUt.default_bounds(severity, GLUt.severity.ERROR, GLUt.severity.SILENT, GLUt.severity.ERROR)
+
+    local warnStart = GLUt.type_is(funcName, "string") and (funcName .. ": expected arg \"") or "Expected arg \""
+    severity_warn(severity, warnStart .. argName .. "\" of type \"" .. expected .. "\" got type \"" .. got .. "\"!")
+    severity_warn(severity, "Traceback: " .. debug.traceback())
+end
+
+function GLUt.type_check(arg, expected, argName, funcName, severity)
+    local argType = GLUtCfg.type(arg)
+
+    expected = string.gsub(expected, '?', "|nil")
+    for _, validType in pairs(GLUt.str_split(expected, '|')) do
+        if validType == argType then return true end
+    end
+
+    GLUt.type_warn(argName, funcName, expected, argType, severity)
+
+    return false
+end
+
+function GLUt.type_is(a1, t)
+    return GLUtCfg.type(a1) == t
+end
+
+function GLUt.type_eq(a1, a2)
+    return GLUtCfg.type(a1) == GLUtCfg.type(a2)
+end
+
+function GLUt.vararg_capture(...)
+    local n = select('#', ...)
+    return n, { ... }
+end
+
+function GLUt.vararg_iter(...)
+    local n, t = GLUt.vararg_capture(...)
+    local i = 0
+    return function()
+        i = i + 1
+        if i <= n then return i, t[i], n end
+    end, t
+end
+
+function GLUt.str_split(str, separator)
+    str = str .. separator
+    separator = GLUt.str_escape_pattern(separator)
+
+    local substrs = {}
+    for substr in string.gmatch(str, "(.-)" .. separator) do
+        substrs[#substrs+1] = substr
+    end
+    return substrs
+end
+
+function GLUt.str_has_match(str, pattern)
+    return string.match(str, pattern) ~= nil
+end
+
+function GLUt.str_escape_pattern(str)
+    local escaped = str
+    for _, specChar in ipairs(patternSpecChars) do
+        local escapedSpec = '%' .. specChar
+        escaped = string.gsub(escaped, escapedSpec, (specChar == '%') and "%%" or '%' .. escapedSpec)
+    end
+    return escaped
+end
+
+function GLUt.str_double_substr(str, substr)
+    local safe = GLUt.str_escape_pattern(substr)
+    return string.gsub(str, safe, safe .. safe)
+end
+
+function GLUt.str_isempty(str)
+    return string.match(str, "^%s$") ~= nil
+end
+
+function GLUt.str_chariter(str)
+    local n = #str
+    local i = 0
+    return function()
+        i = i + 1
+        if i <= n then return GLUt.str_getchar(str, i) end
+    end
+end
+
+function GLUt.str_trim(str, pattern)
+    pattern = GLUt.default(pattern, "%s")
+    return GLUt.str_trimend(GLUt.str_trimstart(str, pattern), pattern)
+end
+
+function GLUt.str_trimstart(str, pattern)
+    pattern = GLUt.default(pattern, "%s")
+    return string.gsub(str, '^' .. pattern, "")
+end
+
+function GLUt.str_trimend(str, pattern)
+    pattern = GLUt.default(pattern, "%s")
+    return string.gsub(str, pattern .. '$', "")
+end
+
+function GLUt.str_getchar(str, i)
+    return string.sub(str, i, i)
+end
+
+local unidentified = -1
+local loadstrCache = setmetatable({}, {__mode='k'})
+function GLUt.str_runlua(source, fenv, chunkName)
+    chunkName = GLUt.default_exec(chunkName, function()
+        unidentified = unidentified + 1
+        return "loadstring#" .. tostring(unidentified) 
+    end)
+
+    local strFunc, failReason
+    if loadstrCache[source] ~= nil then
+        strFunc = loadstrCache[source]
+    else
+        strFunc, failReason = loadstring(source, chunkName)
+    end
+
+    if GLUtCfg.type(strFunc) ~= "function" then
+        return false, "Loadstring : " .. chunkName .. " : Evaluation failed : " .. failReason
+    end
+    loadstrCache[source] = strFunc
+
+    strFunc = setfenv(strFunc, fenv)
+    return pcall(function()
+        return GLUt.vararg_capture(strFunc())
+    end)
+end
+
+function GLUt.str_runlua_unsafe(source, chunkName)
+    local strFun, failReason = loadstring(source, chunkName)
+    if GLUtCfg.type(strFun) ~= "function" then
+        return false, "Loadstring : " .. chunkName .. " : Evaluation failed : " .. failReason
+    end
+
+    return pcall(function()
+        return GLUt.vararg_capture()
+    end)
+end
+
+function GLUt.kvp_tostring(k, v)
+    return tostring(k) .. " = " .. tostring(v)
+end
+
+function GLUt.tbl_tryindex(tbl, ...)
+    local indexing = tbl
+    for _, k in GLUt.vararg_iter(...) do
+        if GLUtCfg.type(indexing) ~= "table" then
+            return false, indexing
+        end
+        indexing = indexing[tostring(k)]
+    end
+
+    return true, indexing
+end
+
+function GLUt.tbl_deepget(tbl, create_missing, ...)
+    local indexing = tbl
+    for i, k, n in GLUt.vararg_iter(...) do
+        k = tostring(k)
+
+        if indexing[k] == nil and create_missing then
+            indexing[k] = {}
+        end
+
+        indexing = indexing[k]
+        if GLUtCfg.type(indexing) ~= "table" and not (i == n) then
+            return false, indexing, k
+        end
+    end
+
+    return true, indexing
+end
+
+function GLUt.tbl_getkeys(tbl)
+    local keys = {}
+    for k, _ in pairs(tbl) do keys[#keys+1] = k end
+    return keys
+end
+
+function GLUt.tbl_clone(tbl, shallow)
+    shallow = GLUt.default(shallow, false)
+
+    local cloned = {}
+    for k, v in pairs(tbl) do
+        if GLUtCfg.type(v) == "table" and not shallow then
+            cloned[k] = GLUt.tbl_clone(v, shallow)
+        else
+            cloned[k] = v
+        end
+    end
+    return cloned
+end
+
+function GLUt.tbl_merge(tbl1, tbl2, priority)
+    priority = GLUt.default(priority, 1)
+    local secondPriority = priority == 2
+    local merged = {}
+    for k, v in pairs(tbl1) do
+        merged[k] = v
+    end
+    for k, v in pairs(tbl2) do
+        local existing = merged[k]
+        if GLUtCfg.type(existing) == "table" then
+            merged[k] = GLUt.tbl_merge(existing, v, priority)
+        elseif existing ~= nil and secondPriority then
+            merged[k] = v
+        elseif merged[k] == nil then
+            merged[k] = v
+        end
+    end
+    return merged
+end
+
+function GLUt.tbl_findsize(tbl)
+    local i = 0
+    for _, _ in pairs(tbl) do i = i + 1 end
+    return i
+end
+
+local function tbl_tostring(tblName, tbl, levels, level)
+    local str = tblName .. " = {"
+    local indent = string.rep("  ", level)
+    local n = GLUt.tbl_findsize(tbl)
+    local i = 0
+    for k, v in pairs(tbl) do
+        i = i + 1
+        str = str .. '\n' .. indent
+        if GLUtCfg.type(v) == "table" and levels > level then
+            str = str .. tbl_tostring(k, v, levels, level+1)
+        else
+            str = str .. GLUt.kvp_tostring(k, v)
+        end
+        if i < n then str = str .. ',' end
+    end
+    return str
+end
+
+function GLUt.tbl_tostring(tbl, levels, tblName)
+    GLUt.default(tblName, tostring(tbl))
+    return tbl_tostring(tblName, tbl, levels, 1)
+end
+
+function GLUt.tbl_any(tbl, f)
+    local anySucceed = nil
+    for k, v in pairs(tbl) do
+        anySucceed = GLUt.default(anySucceed, false) or f(k, v)
+        if anySucceed then break end
+    end
+    return anySucceed
+end
+
+function GLUt.tbl_all(tbl, f)
+    local allSucceed = nil
+    for k, v in pairs(tbl) do
+        allSucceed = GLUt.default(allSucceed, true) and f(k, v)
+        if not allSucceed then break end
+    end
+    return allSucceed
+end
+
+function GLUt.tbl_is_arr(tbl)
+    local isArr = true
+    for k, v in pairs(tbl) do
+        isArr = isArr and GLUtCfg.type(k) == "number"
+        if not isArr then break end
+    end
+    return isArr
+end
+
+local function tbl_arginfo(argType, name, index, expectedType)
+    local typeStr = GLUt.type_is(expectedType, "string") and (" <T:" .. expectedType .. ">") or ""
+    return argType .. " \"" .. name .. "\" (#" .. tostring(index) .. ")" .. typeStr 
+end
+
+local function tbl_argextract(fname, t, arglayout)
+    local index = arglayout[1]
+    local name = arglayout[2]
+    local expectedType = arglayout[3]
+    local canName = arglayout[4]
+    local default = arglayout.Default or arglayout.default
+    local vital = GLUt.default(arglayout.Vital or arglayout.vital, false)
+
+    local tVal = t[index]
+    if canName and tVal ~= nil then
+        if t[name] ~= nil then
+            return GLUtCfg.error(fname .. "@tblcall : " .. tbl_arginfo("Arg", name, index, expectedType) .. " passed both by name and index!")
+        end
+    elseif canName then
+        tVal = t[name]
+    end
+
+    if tVal == nil and default ~= nil then
+        tVal = default
+    end
+
+    if tVal == nil and expectedType == false then
+        return nil
+    elseif tVal == nil and not GLUt.str_has_match(expectedType, "%?") then
+        local argType = vital and "Vital Arg" or "Arg"
+        return GLUtCfg.error(fname .. "@tblcall : " .. tbl_arginfo(argType, name, index, expectedType) .. " not passed!")
+    end
+
+    if expectedType == false then return tVal end
+    if not GLUt.type_check(tVal, expectedType, name, fname, true) then return nil end
+    return tVal
+end
+
+function GLUt.tbl_weak(keys, values)
+    keys = GLUt.default(keys, false)
+    values = GLUt.default(values, true)
+    return setmetatable({}, { __mode = (keys and 'k' or '') .. (values and 'v' or '') })
+end
+
+function GLUt.fun_tblcallable(fname, f, ...)
+    local n, callingConvention = GLUt.vararg_capture(...)
+    return function(tbl)
+        for k, v in pairs(tbl) do
+            local isValid = false
+            for i=1, n do
+                if isValid then break end
+                local validArg = callingConvention[i]
+                isValid = (k == i) or (k == validArg[2])
+            end
+            if not isValid then
+                GLUtCfg.error("Received unexpected argument \"" .. tostring(k) .. "\" of type \"" .. GLUtCfg.type(v) .. "\"!")
+            end
+        end
+        local args = {}
+        for i=1, n do
+            local argLayout = callingConvention[i]
+            args[i] = tbl_argextract(fname, tbl, argLayout)
+        end
+        return f(unpack(args, 1, n))
+    end
+end
+
+return GLUt]]></ProtectedString>
+					<string name="ScriptGuid">{C7E0E3A4-93E5-45B9-BCDD-31A03D2DD9AD}</string>
+					<BinaryString name="AttributesSerialize"></BinaryString>
+					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+					<bool name="DefinesCapabilities">false</bool>
+					<string name="Name">GLUt</string>
+					<int64 name="SourceAssetId">-1</int64>
+					<BinaryString name="Tags"></BinaryString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX75467072770E435E90AEFC68E9A271FC">
+				<Properties>
+					<Content name="LinkedSource"><null></null></Content>
+					<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
+
+local LuaExpr = {}
+
+local LUA_EXPR_BODY_STRMATCH = "([\\\'\"%-%+%*%^%.,:/_%w%s{}<>!~=+|#`]+)"
+
+function LuaExpr.NewEvalRules(prefix, delim)
+    local bodyMatch = prefix .. LUA_EXPR_BODY_STRMATCH .. delim 
+    return {
+        BodyMatch = bodyMatch,
+        SoleMatch = '^' .. bodyMatch .. '$'
+    }
+end
+
+local LUA_EXPR_MATCH_DEFAULT = LuaExpr.NewEvalRules("%$%(", "%)")
+
+local function isSoleExpr(str, rules)
+    local soleExprData = string.match(str, rules.SoleMatch)
+    return soleExprData ~= nil, soleExprData
+end
+
+local function evalSoleExpr(str, fenv, rules, exprName, multiRet)
+    exprName = glut.default_typed(exprName, "LUAEXPR_UNNAMED", "exprName", "LuaExpr.EvalSoleExpr")
+    multiRet = glut.default_typed(multiRet, false, "multiRet", "LuaExpr.EvalSoleExpr")
+
+    local leadingReturn = string.match(str, "^return%s+")
+    if leadingReturn == nil then str = "return " .. str end
+
+    local success, count, args = glut.str_runlua(str, fenv, exprName)
+    if not success then
+        return false, "LuaExpr : " .. exprName .. " : Evaluation failed : " .. count
+    end
+
+    if multiRet then return success, args end
+
+    if count < 1 then
+        return false, "LuaExpr : " .. exprName .. " : Evaluation Succeeded But Return Invalid : Expected 1 return, got " .. count
+    elseif count > 1 then
+        return false, "LuaExpr : " .. exprName .. " : Evaluation Succeeded But Return Invalid : Expected 1 return, got " .. count
+    end
+
+    return success, args[1]
+end
+
+function LuaExpr.IsExpr(str, rules)
+    rules = glut.default(rules, LUA_EXPR_MATCH_DEFAULT)
+    local match = string.match(str, rules.BodyMatch)
+    return match ~= nil, match
+end
+
+function LuaExpr.Eval(str, fenv, rules, exprName, soleOnly)
+    if not glut.type_check(str, "string", "str", "LuaExpr.Eval") then return end
+    if not glut.type_check(fenv, "table", "fenv", "LuaExpr.Eval") then return end
+
+    rules = glut.default_typed(rules, LUA_EXPR_MATCH_DEFAULT, "rules", "LuaExpr.Eval")
+    exprName = glut.default_typed(exprName, "LUAEXPR_UNNAMED", "epxrName", "LuaExpr.Eval")
+    soleOnly = glut.default_typed(soleOnly, false, "soleOnly", "LuaExpr.Eval")
+
+    local isSole, soleData = isSoleExpr(str, rules)
+    if isSole then return evalSoleExpr(soleData, fenv, rules, exprName, soleOnly) end
+    if soleOnly then return false, nil end
+
+    local i = 0
+    return true, string.gsub(str, rules.BodyMatch, function(subexpr)
+        i = i+1
+        local subExprName = exprName .. '#' .. tostring(i)
+        local evalSuccess, evalVal = evalSoleExpr(subexpr, fenv, rules, subExprName, false)
+        return tostring(evalVal)
+    end)
+end
+
+return LuaExpr]]></ProtectedString>
+					<string name="ScriptGuid">{8F02B545-F1A4-4FF0-A1E7-948CEC05D6D6}</string>
+					<BinaryString name="AttributesSerialize"></BinaryString>
+					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+					<bool name="DefinesCapabilities">false</bool>
+					<string name="Name">LuaExpr</string>
+					<int64 name="SourceAssetId">-1</int64>
+					<BinaryString name="Tags"></BinaryString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX23DCD54F09B24CD599B9AC306203D2DF">
+				<Properties>
+					<Content name="LinkedSource"><null></null></Content>
+					<ProtectedString name="Source"><![CDATA[--[[
+    MultiPatterns // Pattern branches for Lua
+
+    © Sprixitite, 2026
+]]
+
+local MultiPatterns = {}
+MultiPatterns.__index = MultiPatterns
+
+local function toMultiFragments(pat)
+    local ESCAPING = false
+
+    local TOK_SKIP = 0
+    local SCOPE_LVL = 0
+
+    local toks = {}
+    local scope = toks
+
+    local tok = ""
+
+    local scope_push = function(capture)
+        local new = { Parent = scope }
+        scope[#scope+1] = new
+        scope = new
+        SCOPE_LVL = SCOPE_LVL + 1
+    end
+
+    local scope_pop = function()
+        if SCOPE_LVL < 1 then
+            error("Malformed MultiPattern! Attempted to close top-level scope with '>'!")
+        end
+        local old = scope
+        scope = old.Parent
+        old.Parent = nil
+
+        local oldSize = #old
+        if oldSize == 1 then
+            scope[#scope] = old[1]
+        end
+
+        SCOPE_LVL = SCOPE_LVL - 1
+    end
+
+    local tok_end = function()
+        if tok == "" then return end
+        scope[#scope+1] = tok
+        tok = ""
+    end
+
+    for i=1, #pat do
+        TOK_SKIP = TOK_SKIP - 1
+
+        local c = string.sub(pat, i  , i  )
+
+        if c == '%' and not ESCAPING then
+            ESCAPING = true
+        elseif c == '<' and not ESCAPING then
+            tok_end()
+            scope_push()
+            TOK_SKIP = 1
+        elseif c == '>' and SCOPE_LVL > 0 and not ESCAPING then
+            tok_end()
+            scope_pop()
+            TOK_SKIP = 1
+        elseif c == '|' and SCOPE_LVL > 0 and not ESCAPING then
+            tok_end()
+            TOK_SKIP = 1
+        else
+            ESCAPING = false
+        end
+
+        if TOK_SKIP < 1 then
+            tok = tok .. c
+        end
+
+        if i == #pat then
+            if SCOPE_LVL > 0 then
+                error("Incomplete MultiPattern - expected '>'x" .. i .. " but found end of string!")
+            end
+            tok_end()
+        end
+    end
+
+    return toks	
+end
+
+local function toObjects(fragments)
+    for i, fragment in ipairs(fragments) do
+        if type(fragment) == "table" then
+            fragments[i] = toObjects(fragment)
+        end
+    end
+
+    return { _Fragments = fragments }
+end
+
+function MultiPatterns.new(pattern)
+    return setmetatable(
+        toObjects(toMultiFragments(pattern)),
+        MultiPatterns
+    )
+end
+
+function MultiPatterns.concat(...)
+    local n = select('#', ...)
+    local varargs = { ... }
+    if n == 0 then return nil end
+    if n == 1 then return MultiPatterns.new(varargs[1]) end
+
+    local str = "<"
+    for i=1, n do
+        str = str .. tostring(varargs[i])
+        if i ~= n then str = str .. '|' end
+    end
+    str = str .. '>'
+
+    return MultiPatterns.new(str)
+end
+
+local function try_str_match_and_capture(str, pat, init)
+    local i, j, cap1 = string.find(str, pat, init)
+    if i == nil then
+        return false, nil, nil, nil
+    end
+
+    local match = string.sub(str, i, j)
+    if cap1 == nil then
+        return true, j, match, {}
+    end
+
+    return true, j, match, { string.match(str, pat, init) }
+end
+
+local function match_or(self, str, cursor)
+    for _, pat in ipairs(self._Fragments) do
+        local patT = type(pat)
+        if patT == "table" then
+            local success, newCursor, match, captures = match_or(pat, str, cursor)
+            if success then
+                return true, newCursor, match, captures
+            end
+        elseif patT == "string" then
+            local success, newCursor, match, captures = try_str_match_and_capture(str, pat, cursor)
+            if success then
+                return true, newCursor, match, captures
+            end
+        else
+            error("Internal error in MultiPatterns! Match fragment was not table or string!")
+        end
+    end
+
+    return false, nil, nil, nil
+end
+
+local function match_sequence(self, str, cursor)
+    local seq_match = ""
+    local captures = {}
+
+    local add_captures = function(tbl)
+        local n = #captures
+        for i=1, #tbl do
+            captures[n+i] = tbl[i]
+        end
+    end
+
+    for _, pat in ipairs(self._Fragments) do
+        local patT = type(pat)
+        local fragmentMatched = false
+        if patT == "table" then
+            local success, newCursor, match, captures = match_or(pat, str, cursor)
+
+            if success then
+                fragmentMatched = true
+                cursor = newCursor
+                seq_match = seq_match .. match
+                add_captures(captures)
+            end
+
+        elseif patT == "string" then
+            local success, newCursor, match, captures = try_str_match_and_capture(str, pat, cursor)
+
+            if success then
+                fragmentMatched = true
+                cursor = newCursor
+                seq_match = seq_match .. match
+                add_captures(captures)
+            end
+        else
+            error("Internal error in MultiPatterns! Match fragment was not table or string!")
+        end
+
+        if not fragmentMatched then
+            return false, nil, nil
+        end
+    end
+
+    return true, seq_match, captures
+end
+
+function MultiPatterns.match(self, str, want_match, want_captures)
+    local want_stdlike = not (want_match or want_captures)
+    local want_all     = (want_match and want_captures)
+
+    local success, match, captures = match_sequence(self, str, 1)
+
+    if not success then return nil end
+
+    if want_all then return match, unpack(captures) end
+    if want_stdlike then
+        if #captures > 0 then return unpack(captures) end
+        return match
+    end
+
+    if want_match then
+        return match
+    elseif want_captures then
+        return unpack(captures)
+    end
+end
+
+return MultiPatterns]]></ProtectedString>
+					<string name="ScriptGuid">{1F65ED8C-36C5-4207-9503-4CD2460ED4B9}</string>
+					<BinaryString name="AttributesSerialize"></BinaryString>
+					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+					<bool name="DefinesCapabilities">false</bool>
+					<string name="Name">MultiPatterns</string>
+					<int64 name="SourceAssetId">-1</int64>
+					<BinaryString name="Tags"></BinaryString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBXF3D386A56F6C43309DA07C3390B2C3A3">
+				<Properties>
+					<Content name="LinkedSource"><null></null></Content>
+					<ProtectedString name="Source"><![CDATA[--[[
+    Slogger, yet another minimal Lua logging module
+    Log function + post-init function are configurable, for dealing with the slog that is lua version compatibility
+    
+    Tested to be compatible with Lua5.1
+    Presumed compatible with Lua5.2-5.5/Luajit
+    
+    © Sprixitite, 2025
+]]
+
+local slogger = {}
+
+local sloggerCfg = {
+    postInit = function(tbl) return tbl end,
+    logFunc = print
+}
+
+local function varargs(...)
+    local argCount = select('#', ...)
+    local argTbl = { ... }
+    local i = 0
+    return function()
+        i = i + 1
+        if i <= argCount then return i, argTbl[i], argCount end
+    end, argTbl
+end
+
+function slogger.new(...)
+    local loggerPrefix = ""
+    local varargsIter, argsTbl = varargs(...)
+
+    for i, arg in varargsIter do
+        loggerPrefix = loggerPrefix .. tostring(arg) .. " : "
+    end
+
+    local doWarn = function(tbl, ...)
+        local finalMsg = ""
+
+        for i, arg, argCount in varargs(...) do
+            finalMsg = finalMsg .. tostring(arg)
+            if i ~= argCount then
+                finalMsg = finalMsg .. " : "
+            end
+        end
+
+        sloggerCfg.logFunc(loggerPrefix .. finalMsg)
+    end
+
+    local specialize = function(...)
+        return slogger.new(unpack(argsTbl), ...)
+    end
+
+    local newLogger = setmetatable({ specialize = specialize }, {__call = doWarn})
+    return sloggerCfg.postInit(newLogger)
+end
+
+function slogger.init(cfg)
+    for k, v in pairs(cfg) do
+        if type(sloggerCfg[k]) == type(v) then
+            sloggerCfg[k] = v
+        end
+    end
+    return slogger
+end
+
+return slogger]]></ProtectedString>
+					<string name="ScriptGuid">{EAF73F66-F9A4-4831-B498-998A0CA0FA69}</string>
+					<BinaryString name="AttributesSerialize"></BinaryString>
+					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+					<bool name="DefinesCapabilities">false</bool>
+					<string name="Name">Slogger</string>
+					<int64 name="SourceAssetId">-1</int64>
+					<BinaryString name="Tags"></BinaryString>
+				</Properties>
+			</Item>
+		</Item>
+		<Item class="Folder" referent="RBX05DB39C4E4FC4A3B996CC9811E316E2D">
+			<Properties>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+				<bool name="DefinesCapabilities">false</bool>
+				<string name="Name">SFuncEval</string>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+			<Item class="ModuleScript" referent="RBX554EA1A9266F4EBCBA642656AB2B3040">
+				<Properties>
+					<Content name="LinkedSource"><null></null></Content>
+					<ProtectedString name="Source"><![CDATA[local glut = require("../Lib/GLUt")
+local InstanceMan = require("../InstanceManager")
+local attrEval = require("../AttributeEval/Main")
+local DebbieDebug = require("../Lib/DebbieDebug")
+
+local warnLogger = require("../Lib/Slogger").init{
+    postInit = table.freeze,
+    logFunc = warn
+}
+
+local warn = warnLogger.new("PrefabSystem", "SFuncEval")
+
+local SFUNC_PATTERN = "^%$({[^\n\r]+})$"
+local SFuncEval = {}
+
+SFuncEval.Fenv = require("./Fenv")
+SFuncEval.Funcs = require("./Funcs")
+
+local function sFuncToTable(name, attrVal)
+    local warn = warn.specialize("SFuncToTable", `{name}`)
+    local success, count, args = glut.str_runlua("return " .. attrVal:match(SFUNC_PATTERN), SFuncEval.Fenv.new(SFuncEval.Funcs))
+
+    if not success then
+        warn(count)
+        return false, nil
+    end
+
+    local warn = warn.specialize("Internal Error")
+    if count < 1 then
+        warn("No args returned?")
+        return false, nil
+    elseif count > 1 then
+        warn("Multiple args returned?")
+    end
+
+    local sfuncArgs = {}
+    for i=3, #args[1] do
+        sfuncArgs[#sfuncArgs+1] = args[1][i]
+        args[1][i] = nil
+    end
+    args[1][3] = sfuncArgs
+
+    return true, args[1]
+end
+
+function SFuncEval.SFuncToFunction(attrName, attrVal)
+    local warn = warn.specialize("Eval", `"{attrName}" @ {attrVal}`)
+
+    if not SFuncEval.IsSFunc(attrVal) then
+        warn("Value is not a valid SFunc")
+        return nil
+    end
+
+    local success, tbl = sFuncToTable(attrName, attrVal)
+    if not success then return nil end
+
+    return function(prefab, prefabElement)
+        local success, value = pcall(tbl[2], prefab, prefabElement, unpack(tbl[3]))
+        if success and typeof(value) ~= tbl[1] then return false, "Type mismatch - expected " .. tbl[1] .. " but got " .. typeof(value) end
+        return success, value
+    end
+end
+
+function SFuncEval.DeriveSFuncTree(treeRoot)
+    local warn = warn.specialize("DeriveSFuncTree")
+
+    local tree = InstanceMan.DeepExecute(treeRoot, InstanceMan.AttributeExecute, nil, false, function(inst, attrName, attrVal)
+        if type(attrVal) ~= "string" then return end
+        if SFuncEval.IsSFunc(attrVal) then
+            return SFuncEval.SFuncToFunction(attrName, attrVal)
+        end
+    end)
+
+    local fixTreeNames
+    fixTreeNames = function(branch)
+        branch.SFuncs = branch.Result or {}
+        branch.Result = nil
+        local newChildren = {}
+        for k, v in pairs(branch.Children) do
+            if newChildren[k.Name] ~= nil then
+                warn(`Found duplicate SFunc branch instance {k} - remove duplicate names`)
+                continue
+            end
+
+            newChildren[k.Name] = v
+            fixTreeNames(v)
+        end
+        branch.Children = newChildren
+    end
+    fixTreeNames(tree)
+
+    return tree
+end
+
+function SFuncEval.RunSFuncTree(tree, prefab, evalRoot)
+    local warn = warn.specialize("RunSFuncTree")
+    DebbieDebug.print(`Running SFunc tree for Prefab {prefab} on instance {evalRoot}`)
+
+    for childName, branch in pairs(tree.Children) do
+        local evalChild = evalRoot:FindFirstChild(childName)
+        if evalChild == nil then
+            warn(`Expected EvalTree complement {evalRoot}.{childName}, but no such instance exists`, "Skipping SFunc branch")
+            continue
+        end
+        SFuncEval.RunSFuncTree(branch, prefab, evalChild)
+    end
+
+    for attrName, sFunc in pairs(tree.SFuncs) do
+        if evalRoot:GetAttribute(attrName) ~= nil then
+            DebbieDebug.print(`SFunc-Controlled attribute "{attrName}" is already-set, skipping evaluation`)
+            continue
+        end
+
+        local success, result = sFunc(prefab, evalRoot)
+
+        evalRoot:SetAttribute(attrName, nil)
+        if not success then
+            warn(`Evaluation of SFunc {attrName} failed`, result, "Attribute will be skipped")
+            continue
+        end
+
+        local attrInfo = attrEval.NameInfo.GetInfo(attrName)
+        DebbieDebug.print(`Evaluation of SFunc {evalRoot}.{attrName} succeeded`, result, `Will be assigned to {attrInfo.Target}`)
+        evalRoot:SetAttribute(attrInfo.Target, result)
+    end
+end
+
+function SFuncEval.IsSFunc(attrVal)
+    return attrVal:match(SFUNC_PATTERN) ~= nil
+end
+
+return SFuncEval]]></ProtectedString>
+					<string name="ScriptGuid">{1E7BA2EE-20D7-4277-AAA0-561824AB8BD6}</string>
+					<BinaryString name="AttributesSerialize"></BinaryString>
+					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+					<bool name="DefinesCapabilities">false</bool>
+					<string name="Name">Main</string>
+					<int64 name="SourceAssetId">-1</int64>
+					<BinaryString name="Tags"></BinaryString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX94FF381C7A9742B5BF69BD13E0BF0431">
+				<Properties>
+					<Content name="LinkedSource"><null></null></Content>
+					<ProtectedString name="Source"><![CDATA[local Fenv = {}
+
+function Fenv.new(funcs)
+    local i = 0
+    return setmetatable(
+        {},
+        {
+            __index = function(tbl, k)
+                i = i + 1
+                if i == 2 then return funcs[k] end
+                return k
+            end,
+        }
+    )
+end
+
+return Fenv]]></ProtectedString>
+					<string name="ScriptGuid">{469BB307-AEE6-4D1C-BB21-FC9757B09926}</string>
+					<BinaryString name="AttributesSerialize"></BinaryString>
+					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+					<bool name="DefinesCapabilities">false</bool>
+					<string name="Name">Fenv</string>
+					<int64 name="SourceAssetId">-1</int64>
+					<BinaryString name="Tags"></BinaryString>
+				</Properties>
+			</Item>
+			<Item class="ModuleScript" referent="RBX6097E75FA58B40229368380479B7E553">
+				<Properties>
+					<Content name="LinkedSource"><null></null></Content>
+					<ProtectedString name="Source"><![CDATA[local HttpService = game:GetService("HttpService")
+
+local glut = require("../Lib/GLUt")
+
+local SFuncs = {}
+
+local function checkArgCountRange(fname, expectedMin, expectedMax, ...)
+    local argCount = select('#', ...)
+    if argCount < expectedMin or argCount > expectedMax then
+        local expected = (expectedMin == expectedMax) and expectedMin-2 or `{expectedMin-2}-{expectedMax-2}`
+        error(`{fname} expects {expected} arguments, but got {argCount}!`)
+    end
+end
+
+local function checkArgCount(fname, expected, ...) checkArgCountRange(fname, expected, expected, ...) end
+
+local PREFAB_IDS  = glut.tbl_weak(true, false)
+local ELEMENT_IDS = glut.tbl_weak(true, false)
+local function getId(tbl, inst)
+    local existing = tbl[inst]
+    if existing ~= nil then return existing end
+
+    local size = glut.tbl_findsize(tbl)
+    tbl[inst] = size
+    return size
+end
+
+local function strKeySub(str, key, value)
+    key = tostring(key)
+    value = tostring(value)
+    return string.gsub(str, "([^{]){" .. key .. "}([^}])", function(d1, d2)
+        return d1 .. value .. d2
+    end)
+end
+
+function SFuncs.this_prop(prefab, element, property, ...)
+    checkArgCount("SpecFunc.this", 3, prefab, element, property, ...)
+    return element[property]
+end
+
+function SFuncs.child_prop(prefab, element, child, property, ...)
+    checkArgCount("SpecFunc.child", 4, prefab, element, child, property, ...)
+    return element:FindFirstChild(child)[property]
+end
+
+function SFuncs.this_attr(prefab, element, attrname, ...)
+    checkArgCount("SpecFunc.this_attr", 3, prefab, element, attrname, ...)
+    return element:GetAttribute(attrname)
+end
+
+function SFuncs.child_attr(prefab, element, child, attrname, ...)
+    checkArgCount("SpecFunc.child_attr", 4, prefab, element, child, attrname, ...)
+    return element:FindFirstChild(child):GetAttribute(attrname)
+end
+
+function SFuncs.str_varsub(prefab, element, str, ...)
+    checkArgCount("SpecFunc.str_id_sub", 3, prefab, element, str, ...)
+    local temp = ` {str} `
+    temp = strKeySub(temp, "pid", getId(PREFAB_IDS, prefab))
+    temp = strKeySub(temp, "eid", getId(ELEMENT_IDS, element))
+    temp = strKeySub(temp, "pname", prefab.Name)
+    temp = strKeySub(temp, "ename", element.Name)
+    temp = strKeySub(temp, "rand", math.random(0, 9999))
+    temp = strKeySub(temp, "hash_full", HttpService:GenerateGUID(false))
+    temp = strKeySub(temp, "hash_6", HttpService:GenerateGUID(false):sub(0, 6))
+    temp = temp:gsub("{{", "{"):gsub("}}", "}"):sub(2, -2)
+    return temp
+end
+
+return SFuncs]]></ProtectedString>
+					<string name="ScriptGuid">{DE02E0EB-FDA3-4FA5-8D7D-4DBEFA248CE7}</string>
+					<BinaryString name="AttributesSerialize"></BinaryString>
+					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
+					<bool name="DefinesCapabilities">false</bool>
+					<string name="Name">Funcs</string>
+					<int64 name="SourceAssetId">-1</int64>
+					<BinaryString name="Tags"></BinaryString>
+				</Properties>
+			</Item>
 		</Item>
 	</Item>
 </roblox>

@@ -124,16 +124,20 @@ Priority is self explanatory, attributes beginning with lower numbers will be ev
 > [!NOTE]
 > The one exception is any given instance's name, which undergoes attribute evaluation after every attribute.
 
-Attributes within prefabs may belong to one "type" each. As of writing there are 5, belonging to two different categories:
+Attributes within prefabs may belong to one "type" each. As of writing there are 7, belonging to three different categories:
 
 There are the import types:
 - `imponly`
 - `noimp`
   
+There are the deprecated types:
+- `ignore`
+
 And the standard types:
 - `peval`
 - `ignore`
-- `this`
+- `exec`
+- `debug`
 
 > [!CAUTION]
 > Import types are only for use on the InstanceBase, whereas standard types are only for use on anything inside of a Group Target, use outside of these guidelines may technically function but is not officially supported.
@@ -143,9 +147,14 @@ Import types determine how attribute defaults work with **SpongeZoneTools Attrib
 
 <a name="leave-this-attr-example"></a>
 
+The deprecated types are holdovers from older versions of the plugin, and are not to be used, but for completeness will be explained here:
+- The `ignore` type causes any attribute belonging to it to be deleted following its evaluation. This is useful in conjunction with more advanced features, but has been superceded[^IgnoreSuperceded] by the `exec` type.
+[^IgnoreSuperceded]: The type still functions as of the current version, but may eventually be removed altogether. The reasoning for this is twofold: the name, and default priority settings. The `exec` type when not given an explicit priority will always run before other attributes, `ignore` does not have this behaviour.
+
 The standard types are much more interesting, operating as follows:
 - The `peval` type stands for "programmable evaluate", and is complicated enough it will have to be explained later[^ProgrammableRef].
-- The `ignore` type causes any attribute belonging to it to be deleted following its evaluation, this is useful in conjunction with more advanced features.
+- The `exec` type stands for "execute", all `exec` attributes will be deleted following evaluation. We'll talk about this more in the next chapter.
+- The `debug` type is a bit special and is mostly for internal use. It can be used to toggle debug output for specific attributes or instances.
 - The `this` type will set the corresponding property on whichever instance it belongs to. ([Click to go to Example](#attribute-type-example---this-))
 
 [^ProgrammableRef]: Formerly implemented as the programmable scope, as well as the `ignore.ProgrammableDone` attribute

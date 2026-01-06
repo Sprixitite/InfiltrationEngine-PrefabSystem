@@ -1,7 +1,7 @@
 <roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
 	<External>null</External>
 	<External>nil</External>
-	<Item class="Folder" referent="RBX193060074577467AA861FD8FEEB9B4A9">
+	<Item class="Folder" referent="RBX0171D1A0FD7A4722B535CB44DC925EE4">
 		<Properties>
 			<BinaryString name="AttributesSerialize"></BinaryString>
 			<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -10,7 +10,7 @@
 			<int64 name="SourceAssetId">-1</int64>
 			<BinaryString name="Tags"></BinaryString>
 		</Properties>
-		<Item class="Script" referent="RBX88B1D3EDA6DF4F67951D427B7C63F987">
+		<Item class="Script" referent="RBX0B763A0C865241709AA91190E250FABB">
 			<Properties>
 				<ProtectedString name="Source"><![CDATA[local PREFABSYS_DEBUG_MODE = false
 
@@ -387,7 +387,7 @@ apiConsumer.DoAPILoop(plugin, API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnA
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX11D84A03A32B48D4A296308D4F48B512">
+		<Item class="ModuleScript" referent="RBX866DE95D5D4740D28B774392060647E6">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[local glut = require("./Lib/GLUt")
@@ -775,7 +775,7 @@ return luaExprFuncs]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX6340BD4445E949C5805FA35482A02B8D">
+		<Item class="ModuleScript" referent="RBX54555DD9BFCE46418CC0404E8175CAF6">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[local glut = require("./Lib/GLUt")
@@ -846,7 +846,7 @@ return ShebangFuncs
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBXD49031676B0C46D5A522FA639F6FA747">
+		<Item class="ModuleScript" referent="RBX5AF58C8C420647BC8CCA1220E88A6435">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[return {
@@ -865,7 +865,7 @@ return ShebangFuncs
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX7D5DDDDD1CE844F0BE3450F7E0F5346D">
+		<Item class="ModuleScript" referent="RBX166EF506FB754C4C879061DC0BC14103">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[local warnLogger = require("./Lib/Slogger").init{
@@ -966,7 +966,7 @@ return PrefabScope]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX618D16CAFBB94E74B127616CDB8044C1">
+		<Item class="ModuleScript" referent="RBX27517FA62A674BD2B0462A7D38886D64">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[local InstanceMan = require("./InstanceManager")
@@ -1007,7 +1007,7 @@ return PrefabTarget]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="ModuleScript" referent="RBX010530020EEC469B954279C0750B0643">
+		<Item class="ModuleScript" referent="RBX8376366F7DAD48C29E4324D08875FDF9">
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[local InstanceManager = {}
@@ -1104,7 +1104,7 @@ return InstanceManager]]></ProtectedString>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
 		</Item>
-		<Item class="Folder" referent="RBX4121F2F590BC4ECE81F42E472879B66B">
+		<Item class="Folder" referent="RBX3D403466A39F40CA8B331DBAFE112A73">
 			<Properties>
 				<BinaryString name="AttributesSerialize"></BinaryString>
 				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -1113,7 +1113,7 @@ return InstanceManager]]></ProtectedString>
 				<int64 name="SourceAssetId">-1</int64>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
-			<Item class="ModuleScript" referent="RBXC00EB2DCF3DB4B32AF1A07C1E2185D69">
+			<Item class="ModuleScript" referent="RBX6D368F5F2CCB4CC2B0D3CD3FCFC2D6C9">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[local GLUt = require("../Lib/GLUt")
@@ -1371,8 +1371,8 @@ function AttributeEval.EvaluateAllRecurse(
 
             local priorityStripped = attrInfo:NameNoPriority()
             if watchDict[priorityStripped] then
-                watchResults[instance] = watchResults[instance] or {}
-                watchResults[instance][priorityStripped] = newValue
+                watchResults[priorityStripped] = watchResults[priorityStripped] or {}
+                watchResults[priorityStripped][instance] = newValue
             end
 
             DebbieDebug.globj_print(instance, `Attribute {attrName} belongs to type {attrInfo.Scope} - Handing off to appropriate handler`)
@@ -1389,7 +1389,7 @@ function AttributeEval.EvaluateAllRecurse(
         evalAndSetProp(instance, "Value", evalState)
     end, childSort, false)
 
-    return evalResults
+    return watchResults
 end
 
 return AttributeEval]]></ProtectedString>
@@ -1402,7 +1402,7 @@ return AttributeEval]]></ProtectedString>
 					<BinaryString name="Tags"></BinaryString>
 				</Properties>
 			</Item>
-			<Item class="ModuleScript" referent="RBXBF3C8C12B30D4591803D3D556EADCDF4">
+			<Item class="ModuleScript" referent="RBX159D6256B5424099A93919B778EA8C71">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[local glut = require("../Lib/GLUt")
@@ -1611,7 +1611,7 @@ return AttrNameInfo]]></ProtectedString>
 					<BinaryString name="Tags"></BinaryString>
 				</Properties>
 			</Item>
-			<Item class="ModuleScript" referent="RBXD6DA9399F805470491131DDB82008E5C">
+			<Item class="ModuleScript" referent="RBX8664DE2FA4644F21A830D52810F9D31F">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[local DEBUGGING_ATTRS = setmetatable({}, {__mode='k'})
@@ -1709,7 +1709,7 @@ return {
 				</Properties>
 			</Item>
 		</Item>
-		<Item class="Folder" referent="RBXCBCED561F83540988DD87A403727454E">
+		<Item class="Folder" referent="RBX105ECE9FE24F47298D6763034C40F489">
 			<Properties>
 				<BinaryString name="AttributesSerialize"></BinaryString>
 				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -1718,7 +1718,7 @@ return {
 				<int64 name="SourceAssetId">-1</int64>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
-			<Item class="ModuleScript" referent="RBXFBEEB8894D0B4973AAA0789EEEFC1988">
+			<Item class="ModuleScript" referent="RBXFBE29BA39601493CBCBB77DF49ED9CD3">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[--[[
@@ -1875,7 +1875,7 @@ return APIConsumer]]></ProtectedString>
 					<BinaryString name="Tags"></BinaryString>
 				</Properties>
 			</Item>
-			<Item class="ModuleScript" referent="RBX22040C3489514B62992AEBBEFF6F3878">
+			<Item class="ModuleScript" referent="RBXC62C7FB3744A421586C7A8E31E7CED0B">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[--[[
@@ -1986,7 +1986,7 @@ return DebbieDebug]]></ProtectedString>
 					<BinaryString name="Tags"></BinaryString>
 				</Properties>
 			</Item>
-			<Item class="ModuleScript" referent="RBXC195CBD7B6A2498A920BA14F28C2A98F">
+			<Item class="ModuleScript" referent="RBX6121BB0776BC4903BD91A52CE88394C5">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[--[[
@@ -2243,7 +2243,7 @@ return EnumEngineer]]></ProtectedString>
 					<BinaryString name="Tags"></BinaryString>
 				</Properties>
 			</Item>
-			<Item class="ModuleScript" referent="RBXB765CEC3BD7348478F92EC7EE1800D89">
+			<Item class="ModuleScript" referent="RBX79F7CC9A54904967A8940521F5D6B61D">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[--[[
@@ -2689,7 +2689,7 @@ return GLUt]]></ProtectedString>
 					<BinaryString name="Tags"></BinaryString>
 				</Properties>
 			</Item>
-			<Item class="ModuleScript" referent="RBX75467072770E435E90AEFC68E9A271FC">
+			<Item class="ModuleScript" referent="RBXA705A8ADE4FA48E5966A0C88065B3281">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[local glut = require("./GLUt")
@@ -2773,7 +2773,7 @@ return LuaExpr]]></ProtectedString>
 					<BinaryString name="Tags"></BinaryString>
 				</Properties>
 			</Item>
-			<Item class="ModuleScript" referent="RBX23DCD54F09B24CD599B9AC306203D2DF">
+			<Item class="ModuleScript" referent="RBX0AC160C3F545495E917AC119F7BABC64">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[--[[
@@ -3006,7 +3006,7 @@ return MultiPatterns]]></ProtectedString>
 					<BinaryString name="Tags"></BinaryString>
 				</Properties>
 			</Item>
-			<Item class="ModuleScript" referent="RBXF3D386A56F6C43309DA07C3390B2C3A3">
+			<Item class="ModuleScript" referent="RBXB810BEBFEACE4421A9502D5EA992D46F">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[--[[
@@ -3085,7 +3085,7 @@ return slogger]]></ProtectedString>
 				</Properties>
 			</Item>
 		</Item>
-		<Item class="Folder" referent="RBX05DB39C4E4FC4A3B996CC9811E316E2D">
+		<Item class="Folder" referent="RBXBAF2EE443FEA481C8E55455132ED6B3A">
 			<Properties>
 				<BinaryString name="AttributesSerialize"></BinaryString>
 				<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
@@ -3094,7 +3094,7 @@ return slogger]]></ProtectedString>
 				<int64 name="SourceAssetId">-1</int64>
 				<BinaryString name="Tags"></BinaryString>
 			</Properties>
-			<Item class="ModuleScript" referent="RBX554EA1A9266F4EBCBA642656AB2B3040">
+			<Item class="ModuleScript" referent="RBX8512FEDD3F5144F2BD8A4939D4D9FB02">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[local glut = require("../Lib/GLUt")
@@ -3238,7 +3238,7 @@ return SFuncEval]]></ProtectedString>
 					<BinaryString name="Tags"></BinaryString>
 				</Properties>
 			</Item>
-			<Item class="ModuleScript" referent="RBX94FF381C7A9742B5BF69BD13E0BF0431">
+			<Item class="ModuleScript" referent="RBX6011F352EDE6485CB555466A50E46F6C">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[local Fenv = {}
@@ -3267,7 +3267,7 @@ return Fenv]]></ProtectedString>
 					<BinaryString name="Tags"></BinaryString>
 				</Properties>
 			</Item>
-			<Item class="ModuleScript" referent="RBX6097E75FA58B40229368380479B7E553">
+			<Item class="ModuleScript" referent="RBXCCC2064097E343349D14164CC54091DD">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[local HttpService = game:GetService("HttpService")

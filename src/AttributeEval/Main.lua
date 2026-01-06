@@ -253,8 +253,8 @@ function AttributeEval.EvaluateAllRecurse(
 
             local priorityStripped = attrInfo:NameNoPriority()
             if watchDict[priorityStripped] then
-                watchResults[instance] = watchResults[instance] or {}
-                watchResults[instance][priorityStripped] = newValue
+                watchResults[priorityStripped] = watchResults[priorityStripped] or {}
+                watchResults[priorityStripped][instance] = newValue
             end
 
             DebbieDebug.globj_print(instance, `Attribute {attrName} belongs to type {attrInfo.Scope} - Handing off to appropriate handler`)
@@ -271,7 +271,7 @@ function AttributeEval.EvaluateAllRecurse(
         evalAndSetProp(instance, "Value", evalState)
     end, childSort, false)
 
-    return evalResults
+    return watchResults
 end
 
 return AttributeEval

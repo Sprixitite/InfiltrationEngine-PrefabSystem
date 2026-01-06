@@ -15,8 +15,8 @@
 				<ProtectedString name="Source"><![CDATA[local PREFABSYS_DEBUG_MODE = false
 
 local warnLogger = require("./Lib/Slogger").init{
-	postInit = table.freeze,
-	logFunc = warn
+    postInit = table.freeze,
+    logFunc = warn
 }
 
 local warn = warnLogger.new("PrefabSystem")
@@ -51,327 +51,327 @@ local API_ID = "InfiltrationEngine-PrefabSystem"
 local prefabSystem = {}
 
 function prefabSystem.OnAPILoaded(api: APIReference, prefabSystemState)
-	prefabSystemState.Hooks = prefabSystemState.Hooks or {}
-	prefabSystemState.ExtHooks = prefabSystemState.ExtHooks or {}
-	prefabSystemState.ApiExtensions = prefabSystemState.ApiExtensions or {}
-	prefabSystem.OnAPIUnloaded(api, prefabSystemState)
-	
-	hookName = api.GetRegistrantFactory("Sprix", "PrefabSystem")
-	local attributeImporterAPI = api.GetAPIExtension("AttributeImporter", "Sprix")
-	if attributeImporterAPI then
-		prefabSystem.OnAPIExtensionLoaded(prefabSystemState, nil, "AttributeImporter", "Sprix", attributeImporterAPI)
-	end
-	
-	prefabSystemState.Hooks[1] = api.AddHook("PreSerialize", hookName("PreSerialize"), prefabSystem.OnSerializerExport)
-	prefabSystemState.Hooks[2] = api.AddHook("APIExtensionLoaded", hookName("APIExtensionLoaded"), prefabSystem.OnAPIExtensionLoaded, prefabSystemState)
-	prefabSystemState.Hooks[3] = api.AddHook("APIExtensionUnloaded", hookName("APIExtensionUnloaded"), prefabSystem.OnAPIExtensionUnloaded, prefabSystemState)
+    prefabSystemState.Hooks = prefabSystemState.Hooks or {}
+    prefabSystemState.ExtHooks = prefabSystemState.ExtHooks or {}
+    prefabSystemState.ApiExtensions = prefabSystemState.ApiExtensions or {}
+    prefabSystem.OnAPIUnloaded(api, prefabSystemState)
+
+    hookName = api.GetRegistrantFactory("Sprix", "PrefabSystem")
+    local attributeImporterAPI = api.GetAPIExtension("AttributeImporter", "Sprix")
+    if attributeImporterAPI then
+        prefabSystem.OnAPIExtensionLoaded(prefabSystemState, nil, "AttributeImporter", "Sprix", attributeImporterAPI)
+    end
+
+    prefabSystemState.Hooks[1] = api.AddHook("PreSerialize", hookName("PreSerialize"), prefabSystem.OnSerializerExport)
+    prefabSystemState.Hooks[2] = api.AddHook("APIExtensionLoaded", hookName("APIExtensionLoaded"), prefabSystem.OnAPIExtensionLoaded, prefabSystemState)
+    prefabSystemState.Hooks[3] = api.AddHook("APIExtensionUnloaded", hookName("APIExtensionUnloaded"), prefabSystem.OnAPIExtensionUnloaded, prefabSystemState)
 end
 
 function prefabSystem.ImportAttributesForPrefab(prefabName)
-	local warn = warn.specialize("AttributeImport")
-	
-	local mission = workspace:FindFirstChild("DebugMission")
-	if mission == nil then
-		warn("No Mission folder found!")
-	end
-	
-	local prefabs = mission:FindFirstChild("Prefabs")
-	
-	if prefabs == nil then
-		warn("No Prefabs folder found!")
-		return {} 
-	end
-	
-	local prefab = nil
-	for _, potentialPrefab in ipairs(prefabs:GetChildren()) do
-		if potentialPrefab.Name ~= prefabName then continue end
-		prefab = potentialPrefab
-	end
-	
-	if prefab == nil then
-		warn(`Prefab {prefabName} not found!`)
-		return {} 
-	end
-	
-	local instance = prefab:FindFirstChild("Instance")
-	if instance == nil then
-		warn(`Failed to find instance scope for Prefab {prefabName}`)
-		return {} 
-	end
-	
-	local instanceBase = instance:FindFirstChild("InstanceBase")
-	if instanceBase == nil then
-		warn(`Failed to find InstanceBase for Prefab {prefabName}`)
-		return {}
-	end
-	
-	local importing = {}
-	for attrName, attrDefault in pairs(instanceBase:GetAttributes()) do
-		if glut.str_has_match(attrName, "^noimp%.") then continue end
-		importing[attrName:gsub("^imponly%.", "")] = { type(attrDefault), attrDefault }
-	end
-	
-	return importing
+    local warn = warn.specialize("AttributeImport")
+
+    local mission = workspace:FindFirstChild("DebugMission")
+    if mission == nil then
+        warn("No Mission folder found!")
+    end
+
+    local prefabs = mission:FindFirstChild("Prefabs")
+
+    if prefabs == nil then
+        warn("No Prefabs folder found!")
+        return {} 
+    end
+
+    local prefab = nil
+    for _, potentialPrefab in ipairs(prefabs:GetChildren()) do
+        if potentialPrefab.Name ~= prefabName then continue end
+        prefab = potentialPrefab
+    end
+
+    if prefab == nil then
+        warn(`Prefab {prefabName} not found!`)
+        return {} 
+    end
+
+    local instance = prefab:FindFirstChild("Instance")
+    if instance == nil then
+        warn(`Failed to find instance scope for Prefab {prefabName}`)
+        return {} 
+    end
+
+    local instanceBase = instance:FindFirstChild("InstanceBase")
+    if instanceBase == nil then
+        warn(`Failed to find InstanceBase for Prefab {prefabName}`)
+        return {}
+    end
+
+    local importing = {}
+    for attrName, attrDefault in pairs(instanceBase:GetAttributes()) do
+        if glut.str_has_match(attrName, "^noimp%.") then continue end
+        importing[attrName:gsub("^imponly%.", "")] = { type(attrDefault), attrDefault }
+    end
+
+    return importing
 end
 
 function prefabSystem.OnAPIExtensionLoaded(prefabSystemState, _, name, author, contents)
-	if author ~= "Sprix" or name ~= "AttributeImporter" then return end
-	
-	-- Register ourselves with the Attribute Importer if available
-	prefabSystemState.ExtHooks[1] = {
-		Name = "AttributeImporter",
-		Auth = "Sprix",
-		Dereg = "RemoveAbstractionImporter",
-		Token = contents.AddAbstractionImporter(
-			"PrefabSystem",
-			require("./AttributeImporterSearchInfo"),
-			prefabSystem.ImportAttributesForPrefab
-		)	
-	}
+    if author ~= "Sprix" or name ~= "AttributeImporter" then return end
+
+    -- Register ourselves with the Attribute Importer if available
+    prefabSystemState.ExtHooks[1] = {
+        Name = "AttributeImporter",
+        Auth = "Sprix",
+        Dereg = "RemoveAbstractionImporter",
+        Token = contents.AddAbstractionImporter(
+            "PrefabSystem",
+            require("./AttributeImporterSearchInfo"),
+            prefabSystem.ImportAttributesForPrefab
+        )	
+    }
 end
 
 local extHookIter = glut.custom_iter_template("Name", "Auth", "Dereg", "Token")
 function prefabSystem.OnAPIExtensionUnloaded(prefabSystemState, _, name, author, contents)
-	local removing = {}
-	for i, extName, extAuth, extDereg, extToken in extHookIter(prefabSystemState.ExtHooks) do
-		if name ~= extName or author ~= extAuth then continue end
-		if contents[extDereg] == nil then continue end
-		contents[extDereg](extToken)
-		removing[#removing] = i
-	end
-	for idx=#removing, 1, -1 do
-		table.remove(prefabSystemState.ExtHooks, removing[idx])
-	end 
+    local removing = {}
+    for i, extName, extAuth, extDereg, extToken in extHookIter(prefabSystemState.ExtHooks) do
+        if name ~= extName or author ~= extAuth then continue end
+        if contents[extDereg] == nil then continue end
+        contents[extDereg](extToken)
+        removing[#removing] = i
+    end
+    for idx=#removing, 1, -1 do
+        table.remove(prefabSystemState.ExtHooks, removing[idx])
+    end 
 end
 
 function prefabSystem.OnAPIUnloaded(api: APIReference, prefabSystemState)
-	for _, token in ipairs(prefabSystemState.Hooks) do
-		if token == nil then
-			warn(`Attempt to de-register nil hook?`)
-			continue
-		end
-		api.RemoveHook(token)
-	end
-	for i, extName, extAuth, extDereg, extToken in extHookIter(prefabSystemState.ExtHooks) do
-		local ext = api.GetAPIExtension(extName, extAuth)
-		if ext == nil then continue end
-		if ext[extDereg] == nil then continue end
-		ext[extDereg](extToken)
-	end
-	for _, extToken in ipairs(prefabSystemState.ApiExtensions) do
-		if extToken == nil then
-			warn(`Attempt to de-register nil API Extension?`)
-		end
-		api.RemoveAPIExtension(extToken)
-	end
+    for _, token in ipairs(prefabSystemState.Hooks) do
+        if token == nil then
+            warn(`Attempt to de-register nil hook?`)
+            continue
+        end
+        api.RemoveHook(token)
+    end
+    for i, extName, extAuth, extDereg, extToken in extHookIter(prefabSystemState.ExtHooks) do
+        local ext = api.GetAPIExtension(extName, extAuth)
+        if ext == nil then continue end
+        if ext[extDereg] == nil then continue end
+        ext[extDereg](extToken)
+    end
+    for _, extToken in ipairs(prefabSystemState.ApiExtensions) do
+        if extToken == nil then
+            warn(`Attempt to de-register nil API Extension?`)
+        end
+        api.RemoveAPIExtension(extToken)
+    end
 end
 
 function prefabSystem.OnSerializerExport(hookState: {any}, invokeState, mission: Folder)
-	local warn = warnLogger.new("OnSerializerExport")
-	
-	local prefabFolder = mission:FindFirstChild("Prefabs")
-	if not prefabFolder then return end
-	
-	local first = true
-	repeat
-		if not first then coroutine.yield() end
-		local _, present = invokeState.Get("Sprix_AttributeAuditor_PreSerialize_Present")
-		local success, done = invokeState.Get("Sprix_AttributeAuditor_PreSerialize", "Done")
-		first = false
-	until (not present) or (success and done)
-	
-	if workspace:GetAttribute("EmeraldMode") then
-		print("Hi i'm prefabsystem :3")
-	end
-	
-	local prefabInstanceFolder = mission:FindFirstChild("PrefabInstances")
-	if not prefabInstanceFolder then
-		-- Prevents prefabs from being exported & wasting space in the mission code
-		prefabFolder:Destroy()
-		return
-	end
+    local warn = warnLogger.new("OnSerializerExport")
 
-	local globalState = table.freeze({})
-	local staticStates = {}
-	local prefabInstances = prefabInstanceFolder:GetDescendants()
-	local i = 1
-	while i <= #prefabInstances do
-		local prefabInstance = prefabInstances[i]
-		i = i + 1
-		
-		local warn = warn.specialize(`PrefabInstance {prefabInstance.Name} is invalid`)
-		
-		if prefabInstance:IsA("Folder") then continue end
-		if prefabInstance.Parent:IsA("BasePart") then continue end
-		
-		if not prefabInstance:IsA("BasePart") then
-			warn(`Expected BasePart, got {prefabInstance.ClassName}. Skipping.`)
-			continue
-		end
-		
-		local prefabInstanceType = prefabInstance:GetAttribute("PrefabName")
-		if type(prefabInstanceType) ~= "string" then
-			warn(`PrefabName attribute is of wrong datatype or otherwise invalid. Skipping.`)
-			continue
-		end
-		
-		local instantiatingPrefab = prefabFolder:FindFirstChild(prefabInstanceType)
-		if instantiatingPrefab == nil then
-			warn(`PrefabName points to non-existing prefab {prefabInstanceType}. Skipping.`)
-			continue
-		end
-		
-		local prefabStatic = staticStates[instantiatingPrefab] or {}
-		prefabSystem.InstantiatePrefab(mission, instantiatingPrefab, prefabInstance, prefabStatic, globalState)
-		staticStates[instantiatingPrefab] = prefabStatic
-		for _, i in ipairs(prefabInstanceFolder:GetDescendants()) do
-			if not table.find(prefabInstances, i) then prefabInstances[#prefabInstances+1] = i end
-		end
-	end
-	
-	for _, prefab in ipairs(prefabFolder:GetChildren()) do
-		if not prefab:IsA("Folder") then
-			warn(`Prefab {prefab.Name} is invalid`, `Expected Folder, got {prefab.ClassName}`, "Prefab Will Be Ignored")
-			continue
-		end
+    local prefabFolder = mission:FindFirstChild("Prefabs")
+    if not prefabFolder then return end
 
-		local prefabStatic = staticStates[prefab] or {}
-		prefabSystem.UnpackPrefab(mission, prefab, "Static", function(mission, prefabTargetGroup)
-			attrEval.EvaluateAllRecurse(prefabTargetGroup, { Instance = prefabStatic, Static = prefabStatic, Global = globalState })
-		end)
-		
-	end
-	
-	-- Prevent these from being exported and taking up mission space
-	prefabFolder:Destroy()
-	prefabInstanceFolder:Destroy()
+    local first = true
+    repeat
+        if not first then coroutine.yield() end
+        local _, present = invokeState.Get("Sprix_AttributeAuditor_PreSerialize_Present")
+        local success, done = invokeState.Get("Sprix_AttributeAuditor_PreSerialize", "Done")
+        first = false
+    until (not present) or (success and done)
+
+    if workspace:GetAttribute("EmeraldMode") then
+        print("Hi i'm prefabsystem :3")
+    end
+
+    local prefabInstanceFolder = mission:FindFirstChild("PrefabInstances")
+    if not prefabInstanceFolder then
+        -- Prevents prefabs from being exported & wasting space in the mission code
+        prefabFolder:Destroy()
+        return
+    end
+
+    local globalState = table.freeze({})
+    local staticStates = {}
+    local prefabInstances = prefabInstanceFolder:GetDescendants()
+    local i = 1
+    while i <= #prefabInstances do
+        local prefabInstance = prefabInstances[i]
+        i = i + 1
+
+        local warn = warn.specialize(`PrefabInstance {prefabInstance.Name} is invalid`)
+
+        if prefabInstance:IsA("Folder") then continue end
+        if prefabInstance.Parent:IsA("BasePart") then continue end
+
+        if not prefabInstance:IsA("BasePart") then
+            warn(`Expected BasePart, got {prefabInstance.ClassName}. Skipping.`)
+            continue
+        end
+
+        local prefabInstanceType = prefabInstance:GetAttribute("PrefabName")
+        if type(prefabInstanceType) ~= "string" then
+            warn(`PrefabName attribute is of wrong datatype or otherwise invalid. Skipping.`)
+            continue
+        end
+
+        local instantiatingPrefab = prefabFolder:FindFirstChild(prefabInstanceType)
+        if instantiatingPrefab == nil then
+            warn(`PrefabName points to non-existing prefab {prefabInstanceType}. Skipping.`)
+            continue
+        end
+
+        local prefabStatic = staticStates[instantiatingPrefab] or {}
+        prefabSystem.InstantiatePrefab(mission, instantiatingPrefab, prefabInstance, prefabStatic, globalState)
+        staticStates[instantiatingPrefab] = prefabStatic
+        for _, i in ipairs(prefabInstanceFolder:GetDescendants()) do
+            if not table.find(prefabInstances, i) then prefabInstances[#prefabInstances+1] = i end
+        end
+    end
+
+    for _, prefab in ipairs(prefabFolder:GetChildren()) do
+        if not prefab:IsA("Folder") then
+            warn(`Prefab {prefab.Name} is invalid`, `Expected Folder, got {prefab.ClassName}`, "Prefab Will Be Ignored")
+            continue
+        end
+
+        local prefabStatic = staticStates[prefab] or {}
+        prefabSystem.UnpackPrefab(mission, prefab, "Static", function(mission, prefabTargetGroup)
+            attrEval.EvaluateAllRecurse(prefabTargetGroup, { Instance = prefabStatic, Static = prefabStatic, Global = globalState })
+        end)
+
+    end
+
+    -- Prevent these from being exported and taking up mission space
+    prefabFolder:Destroy()
+    prefabInstanceFolder:Destroy()
 end
 
 function prefabSystem.UnpackPrefab(mission: Folder, prefab: Folder, scope: string, preUnpack)
-	preUnpack = glut.default(preUnpack, function() end)
-	
-	local scopeFolder = PrefabScope.GetScopeOfType(prefab, scope)
-	if scopeFolder == nil then return end
-	local modifiedScopes = preUnpack(mission, scopeFolder) or {scopeFolder}
-	for _, modifiedScope in ipairs(modifiedScopes) do
-		PrefabScope.UnpackToMission(modifiedScope, mission)
-	end
+    preUnpack = glut.default(preUnpack, function() end)
+
+    local scopeFolder = PrefabScope.GetScopeOfType(prefab, scope)
+    if scopeFolder == nil then return end
+    local modifiedScopes = preUnpack(mission, scopeFolder) or {scopeFolder}
+    for _, modifiedScope in ipairs(modifiedScopes) do
+        PrefabScope.UnpackToMission(modifiedScope, mission)
+    end
 end
 
 function prefabSystem.InstantiatePrefab(mission: Folder, prefab: Folder, prefabInstance: BasePart, staticState, globalState)
-	local warn = warn.specialize("InstantiatePrefab", `Prefab {prefab.Name}`)
-	
-	local instanceScope = PrefabScope.GetScopeOfType(prefab, "Instance")
-	if not instanceScope then
-		warn("Prefab may not be instantiated!")
-		return
-	end
-	
-	local instanceData = instanceScope:Clone()
-	local instanceBase = instanceData:FindFirstChild("InstanceBase")
-	if not instanceBase then
-		warn("Instance folder found but no InstanceBase part present!")
-		return
-	end
-	
-	if not instanceBase:IsA("Part") then
-		warn("InstanceBase found but not a part!")
-		return
-	end
-	
-	local sFuncTree = sFuncEval.DeriveSFuncTree(instanceBase)
-	sFuncEval.RunSFuncTree(sFuncTree, prefab, prefabInstance)
-	
-	local instanceSettings = {}
-	for k, v in pairs(instanceBase:GetAttributes()) do
-		if glut.str_has_match(k, "^imponly%.") then continue end
-		local kBase = k:gsub("^noimp%.", "")
-		if instanceSettings[kBase] ~= nil then
-			warn(`Attribute {kBase} is defined multiple times, conflicting with {k}`)
-			warn(`Delete {kBase} or replace with imponly.{kBase} to silence!`)
-		end
-		instanceSettings[kBase] = v
-	end
-	
-	for settingName, instanceValue in pairs(prefabInstance:GetAttributes()) do
-		local warn = warn.specialize(`Ignoring invalid attribute {settingName}`)
-		
-		if settingName == "PrefabName" then continue end
-		
-		settingName = string.gsub(settingName, "^noimp%.", "")
-		local defaultValue = instanceSettings[settingName] 
-		
-		if type(defaultValue) == "string" then
-			local isSFunc = sFuncEval.IsSFunc(defaultValue)
-			if isSFunc then instanceSettings[settingName] = instanceValue continue end
-		end
-		
-		if defaultValue == nil then
-			warn("Attribute not present on InstanceBase")
-			continue
-		end
-		
-		if type(defaultValue) ~= type(instanceValue) then
-			warn(`Expected type {type(defaultValue)} but got {type(instanceValue)}`)
-			continue
-		end
-		
-		instanceSettings[settingName] = instanceValue
-	end
-	
-	local evalState = { Instance = instanceSettings, Static = staticState, Global = globalState }
-	local cfrSet = attrEval.EvaluateAllRecurse(instanceData, evalState, { "this.CFrame" })["this.CFrame"] or {}
-	
-	staticState.Attrs = staticState.Attrs or {}
-	staticState.Attr = staticState.Attrs
-	local staticAttrs = staticState.Attrs
-	for k, v in pairs(instanceSettings) do
-		staticAttrs[k] = staticAttrs[k] or {}
-		local attrTbl = staticAttrs[k]
-		table.insert(attrTbl, v)
-	end
-	
-	for _, prefabElement in pairs(instanceData:GetDescendants()) do
-		if prefabElement == instanceBase then continue end
-		if not prefabElement:IsA("BasePart") then continue end
-		if cfrSet[prefabElement] ~= nil then continue end
-		local baseToElement = instanceBase.CFrame:ToObjectSpace(prefabElement.CFrame)
-		prefabElement.CFrame = prefabInstance.CFrame:ToWorldSpace(baseToElement)
-	end
-	
-	PrefabScope.UnpackToMission(instanceData, mission)
-	
-	local remoteTargetGroup = PrefabScope.GetScopeOfType(prefab, "Remote")
-	if not remoteTargetGroup then return end
-	
-	for _, target in ipairs(remoteTargetGroup:GetChildren()) do
-		local remoteFuncs = {}
-		for _, v in ipairs(target:GetDescendants()) do
-			if v:IsA("Folder") then continue end
-			if not v:IsA("ValueBase") then
-				warn(`Instance {v} in {prefab}.{remoteTargetGroup}.{target} is invalid`, `Expected ValueBase|Folder, got {v.ClassName}`)
-			end
-			remoteFuncs[#remoteFuncs+1] = v
-		end
-		
-		local missionTarget = PrefabTarget.ToMissionTarget(target, mission)
-		if missionTarget == nil then continue end
-		for _, missionTargetItem in ipairs(missionTarget:GetDescendants()) do
-			if not missionTargetItem:IsA("BasePart") then continue end
-			if not prefabSystem.PointInPartBounds(instanceBase, missionTargetItem.Position) then continue end
-			
-			for _, remoteFunc in ipairs(remoteFuncs) do
-				
-			end
-			
-		end
-	end
-	
+    local warn = warn.specialize("InstantiatePrefab", `Prefab {prefab.Name}`)
+
+    local instanceScope = PrefabScope.GetScopeOfType(prefab, "Instance")
+    if not instanceScope then
+        warn("Prefab may not be instantiated!")
+        return
+    end
+
+    local instanceData = instanceScope:Clone()
+    local instanceBase = instanceData:FindFirstChild("InstanceBase")
+    if not instanceBase then
+        warn("Instance folder found but no InstanceBase part present!")
+        return
+    end
+
+    if not instanceBase:IsA("Part") then
+        warn("InstanceBase found but not a part!")
+        return
+    end
+
+    local sFuncTree = sFuncEval.DeriveSFuncTree(instanceBase)
+    sFuncEval.RunSFuncTree(sFuncTree, prefab, prefabInstance)
+
+    local instanceSettings = {}
+    for k, v in pairs(instanceBase:GetAttributes()) do
+        if glut.str_has_match(k, "^imponly%.") then continue end
+        local kBase = k:gsub("^noimp%.", "")
+        if instanceSettings[kBase] ~= nil then
+            warn(`Attribute {kBase} is defined multiple times, conflicting with {k}`)
+            warn(`Delete {kBase} or replace with imponly.{kBase} to silence!`)
+        end
+        instanceSettings[kBase] = v
+    end
+
+    for settingName, instanceValue in pairs(prefabInstance:GetAttributes()) do
+        local warn = warn.specialize(`Ignoring invalid attribute {settingName}`)
+
+        if settingName == "PrefabName" then continue end
+
+        settingName = string.gsub(settingName, "^noimp%.", "")
+        local defaultValue = instanceSettings[settingName] 
+
+        if type(defaultValue) == "string" then
+            local isSFunc = sFuncEval.IsSFunc(defaultValue)
+            if isSFunc then instanceSettings[settingName] = instanceValue continue end
+        end
+
+        if defaultValue == nil then
+            warn("Attribute not present on InstanceBase")
+            continue
+        end
+
+        if type(defaultValue) ~= type(instanceValue) then
+            warn(`Expected type {type(defaultValue)} but got {type(instanceValue)}`)
+            continue
+        end
+
+        instanceSettings[settingName] = instanceValue
+    end
+
+    local evalState = { Instance = instanceSettings, Static = staticState, Global = globalState }
+    local cfrSet = attrEval.EvaluateAllRecurse(instanceData, evalState, { "this.CFrame" })["this.CFrame"] or {}
+
+    staticState.Attrs = staticState.Attrs or {}
+    staticState.Attr = staticState.Attrs
+    local staticAttrs = staticState.Attrs
+    for k, v in pairs(instanceSettings) do
+        staticAttrs[k] = staticAttrs[k] or {}
+        local attrTbl = staticAttrs[k]
+        table.insert(attrTbl, v)
+    end
+
+    for _, prefabElement in pairs(instanceData:GetDescendants()) do
+        if prefabElement == instanceBase then continue end
+        if not prefabElement:IsA("BasePart") then continue end
+        if cfrSet[prefabElement] ~= nil then continue end
+        local baseToElement = instanceBase.CFrame:ToObjectSpace(prefabElement.CFrame)
+        prefabElement.CFrame = prefabInstance.CFrame:ToWorldSpace(baseToElement)
+    end
+
+    PrefabScope.UnpackToMission(instanceData, mission)
+
+    local remoteTargetGroup = PrefabScope.GetScopeOfType(prefab, "Remote")
+    if not remoteTargetGroup then return end
+
+    for _, target in ipairs(remoteTargetGroup:GetChildren()) do
+        local remoteFuncs = {}
+        for _, v in ipairs(target:GetDescendants()) do
+            if v:IsA("Folder") then continue end
+            if not v:IsA("ValueBase") then
+                warn(`Instance {v} in {prefab}.{remoteTargetGroup}.{target} is invalid`, `Expected ValueBase|Folder, got {v.ClassName}`)
+            end
+            remoteFuncs[#remoteFuncs+1] = v
+        end
+
+        local missionTarget = PrefabTarget.ToMissionTarget(target, mission)
+        if missionTarget == nil then continue end
+        for _, missionTargetItem in ipairs(missionTarget:GetDescendants()) do
+            if not missionTargetItem:IsA("BasePart") then continue end
+            if not prefabSystem.PointInPartBounds(instanceBase, missionTargetItem.Position) then continue end
+
+            for _, remoteFunc in ipairs(remoteFuncs) do
+
+            end
+
+        end
+    end
+
 end
 
 function prefabSystem.PointInPartBounds(part, point)
-	point = part.CFrame:PointToObjectSpace(point):Abs() * 0.5
-	return (point.X <= part.Size.X) and (point.Y <= part.Size.Y) and (point.Z <= part.Size.Z)
+    point = part.CFrame:PointToObjectSpace(point):Abs() * 0.5
+    return (point.X <= part.Size.X) and (point.Y <= part.Size.Y) and (point.Z <= part.Size.Z)
 end
 
 apiConsumer.DoAPILoop(plugin, API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnAPIUnloaded)]]></ProtectedString>
@@ -395,374 +395,374 @@ apiConsumer.DoAPILoop(plugin, API_ID, prefabSystem.OnAPILoaded, prefabSystem.OnA
 local luaExprFuncs = {}
 
 local function StaticGroupErr(groupName)
-	error("Attempt to set StaticStateGroup " .. groupName .. " but encountered non-table element!")
+    error("Attempt to set StaticStateGroup " .. groupName .. " but encountered non-table element!")
 end
 
 local function returnArgs(...) return ... end
 
 local function ExprFunc(fname, f, ...)
-	local tblCallable = glut.fun_tblcallable(fname, returnArgs, ...)
-	return function(inst, attr, state, staticState, t)
-		return f(inst, attr, state, staticState, tblCallable(t))
-	end
+    local tblCallable = glut.fun_tblcallable(fname, returnArgs, ...)
+    return function(inst, attr, state, staticState, t)
+        return f(inst, attr, state, staticState, tblCallable(t))
+    end
 end
 
 local function ExprFuncOverload(fname, f, foverloading, ...)
-	local tblCallable = glut.fun_tblcallable(fname, returnArgs, ...)
-	return function(inst, attr, state, staticState, t)
-		local overloaded = function() return foverloading(inst, attr, state, staticState, t) end
-		return f(inst, attr, state, staticState, overloaded, tblCallable(t))
-	end
+    local tblCallable = glut.fun_tblcallable(fname, returnArgs, ...)
+    return function(inst, attr, state, staticState, t)
+        local overloaded = function() return foverloading(inst, attr, state, staticState, t) end
+        return f(inst, attr, state, staticState, overloaded, tblCallable(t))
+    end
 end
 
 luaExprFuncs.Once = ExprFunc(
-	"Once",
-	function(inst, attr, state, staticState, ret, condition)
-		state._Once = state._Once or {}
-		if condition and not state._Once[attr] then
-			state._Once[attr] = true
-			return ret
-		end
-		return false
-	end,
-	{ 1, "ret", false, false, default=false },
-	{ 2, "condition", "boolean", true, default=true }
+    "Once",
+    function(inst, attr, state, staticState, ret, condition)
+        state._Once = state._Once or {}
+        if condition and not state._Once[attr] then
+            state._Once[attr] = true
+            return ret
+        end
+        return false
+    end,
+    { 1, "ret", false, false, default=false },
+    { 2, "condition", "boolean", true, default=true }
 )
 
 luaExprFuncs.tostring = ExprFunc(
-	"tostring",
-	function(inst, attr, state, staticState, value)
-		return tostring(value)
-	end,
-	{ 1, "value", false, false, vital=true }
+    "tostring",
+    function(inst, attr, state, staticState, value)
+        return tostring(value)
+    end,
+    { 1, "value", false, false, vital=true }
 )
 
 luaExprFuncs.tonumber = ExprFunc(
-	"tonumber",
-	function(inst, attr, state, staticState, str)
-		return tonumber(str)
-	end,
-	{ 1, "str", "string", false, vital=true }
+    "tonumber",
+    function(inst, attr, state, staticState, str)
+        return tonumber(str)
+    end,
+    { 1, "str", "string", false, vital=true }
 )
 
 luaExprFuncs.strsan = ExprFunc(
-	"strsan",
-	function(inst, attr, state, staticState, str)
-		-- Sanitize a string for use as a global variable name
-		if string.sub(str, 1, 1):match("^%d") then
-			str = '_' .. str
-		end
-		return str:gsub("[^%w]", "_")
-	end,
-	{ 1, "str", "string", false, vital=true }
+    "strsan",
+    function(inst, attr, state, staticState, str)
+        -- Sanitize a string for use as a global variable name
+        if string.sub(str, 1, 1):match("^%d") then
+            str = '_' .. str
+        end
+        return str:gsub("[^%w]", "_")
+    end,
+    { 1, "str", "string", false, vital=true }
 )
 
 luaExprFuncs.stror = ExprFunc(
-	"stror",
-	function(inst, attr, state, staticState, condition, str1, str2)
-		-- Selects one of two strings depending on the state of a condition variable
-		-- Outputs str1 when condition == false
-		-- Otherwise outputs str2
-		return condition and str2 or str1
-	end,
-	{ 1, "condition", "boolean", false, vital=true },
-	{ 2, "str1", "string", false, vital=true },
-	{ 3, "str2", "string", false, vital=true }
+    "stror",
+    function(inst, attr, state, staticState, condition, str1, str2)
+        -- Selects one of two strings depending on the state of a condition variable
+        -- Outputs str1 when condition == false
+        -- Otherwise outputs str2
+        return condition and str2 or str1
+    end,
+    { 1, "condition", "boolean", false, vital=true },
+    { 2, "str1", "string", false, vital=true },
+    { 3, "str2", "string", false, vital=true }
 )
 
 luaExprFuncs.setAttributes = ExprFunc(
-	"setAttributes",
-	function(inst, attr, state, staticState, attrs)
-		for k, v in pairs(attrs) do
-			inst:SetAttribute(k, v)
-		end
-		return true
-	end,
-	{ 1, "attributes", "table", false, vital=true }
+    "setAttributes",
+    function(inst, attr, state, staticState, attrs)
+        for k, v in pairs(attrs) do
+            inst:SetAttribute(k, v)
+        end
+        return true
+    end,
+    { 1, "attributes", "table", false, vital=true }
 )
 
 luaExprFuncs.setStateValue = ExprFunc(
-	"setStateValues",
-	function(inst, attr, state, staticState, name, value, override)
-		if state[name] ~= nil and not override then
-			error("Attempt to set already-existing StateValue \"" .. name .. "\"!")
-		end
-		state[name] = value
-		return true
-	end,
-	{ 1, "name", "string", false, vital=true },
-	{ 2, "value", false, false, vital=true },
-	{ 3, "override", "boolean", true, default=false }
+    "setStateValues",
+    function(inst, attr, state, staticState, name, value, override)
+        if state[name] ~= nil and not override then
+            error("Attempt to set already-existing StateValue \"" .. name .. "\"!")
+        end
+        state[name] = value
+        return true
+    end,
+    { 1, "name", "string", false, vital=true },
+    { 2, "value", false, false, vital=true },
+    { 3, "override", "boolean", true, default=false }
 )
 
 luaExprFuncs.stringSplit = ExprFunc(
-	"stringSplit",
-	function(inst, attr, state, staticState, value, separator)
-		return glut.str_split(value, separator)
-	end,
-	{ 1, "value", "string", false, vital=true },
-	{ 2, "separator", "string", false, vital=true }
+    "stringSplit",
+    function(inst, attr, state, staticState, value, separator)
+        return glut.str_split(value, separator)
+    end,
+    { 1, "value", "string", false, vital=true },
+    { 2, "separator", "string", false, vital=true }
 )
 
 luaExprFuncs.unpackToState = ExprFunc(
-	"unpackToState",
-	function(inst, attr, state, staticState, unpacking, ...)
-		local locTbl = { ... }
-		for i, v in ipairs(unpacking) do
-			local locPath = locTbl[i]
-			if locPath == nil then break end
-			local unpackPath = glut.str_split(locPath, '.')
-			local unpackLast = table.remove(unpackPath)
-			local success, unpackTbl = glut.tbl_deepget(state, true, unpack(unpackPath))
-			if not success then StaticGroupErr(locPath) end
-			unpackTbl[unpackLast] = v
-		end
-		return true
-	end,
-	-- Ugly hack
-	-- You get 16 unpack locations, use em wisely
-	{  1, "unpacking", "table", false, vital=true },
-	{  2, "state#1", "string", false, vital=true },
-	{  3, "state#2", "string?", false, default=nil },
-	{  4, "state#3", "string?", false, default=nil },
-	{  5, "state#4", "string?", false, default=nil },
-	{  6, "state#5", "string?", false, default=nil },
-	{  7, "state#6", "string?", false, default=nil },
-	{  8, "state#7", "string?", false, default=nil },
-	{  9, "state#8", "string?", false, default=nil },
-	{ 10, "state#9", "string?", false, default=nil },
-	{ 11, "state#10", "string?", false, default=nil },
-	{ 12, "state#11", "string?", false, default=nil },
-	{ 13, "state#12", "string?", false, default=nil },
-	{ 14, "state#13", "string?", false, default=nil },
-	{ 15, "state#14", "string?", false, default=nil },
-	{ 16, "state#15", "string?", false, default=nil },
-	{ 17, "state#16", "string?", false, default=nil }
+    "unpackToState",
+    function(inst, attr, state, staticState, unpacking, ...)
+        local locTbl = { ... }
+        for i, v in ipairs(unpacking) do
+            local locPath = locTbl[i]
+            if locPath == nil then break end
+            local unpackPath = glut.str_split(locPath, '.')
+            local unpackLast = table.remove(unpackPath)
+            local success, unpackTbl = glut.tbl_deepget(state, true, unpack(unpackPath))
+            if not success then StaticGroupErr(locPath) end
+            unpackTbl[unpackLast] = v
+        end
+        return true
+    end,
+    -- Ugly hack
+    -- You get 16 unpack locations, use em wisely
+    {  1, "unpacking", "table", false, vital=true },
+    {  2, "state#1", "string", false, vital=true },
+    {  3, "state#2", "string?", false, default=nil },
+    {  4, "state#3", "string?", false, default=nil },
+    {  5, "state#4", "string?", false, default=nil },
+    {  6, "state#5", "string?", false, default=nil },
+    {  7, "state#6", "string?", false, default=nil },
+    {  8, "state#7", "string?", false, default=nil },
+    {  9, "state#8", "string?", false, default=nil },
+    { 10, "state#9", "string?", false, default=nil },
+    { 11, "state#10", "string?", false, default=nil },
+    { 12, "state#11", "string?", false, default=nil },
+    { 13, "state#12", "string?", false, default=nil },
+    { 14, "state#13", "string?", false, default=nil },
+    { 15, "state#14", "string?", false, default=nil },
+    { 16, "state#15", "string?", false, default=nil },
+    { 17, "state#16", "string?", false, default=nil }
 )
 
 luaExprFuncs.staticGroupToLocalArray = ExprFunc(
-	"staticGroupToLocalArray",
-	function(inst, attr, state, staticState, groupName, elementPrefix, stateScriptAccess)
-		local groupPath = glut.str_split(groupName, '.')
-		local success, groupTbl = glut.tbl_deepget(state, unpack(groupPath))
-		if not success then StaticGroupErr(groupName) end
-		inst:SetAttribute(elementPrefix .. "Count", #groupTbl)
-		local statescriptAccessor = "INIT #StateScriptAccessLocalArrayTemp 0"
-		for i, v in ipairs(groupTbl) do
-			statescriptAccessor = statescriptAccessor .. "\n SET #StateScriptAccessLocalArrayTemp #" .. elementPrefix .. tostring(i) 
-			inst:SetAttribute(elementPrefix .. tostring(i), v)
-		end
-		if stateScriptAccess ~= "NO!" then
-			inst:SetAttribute(stateScriptAccess, statescriptAccessor)
-		end
-		return true
-	end,
-	{ 1, "groupName", "string", false, vital=true },
-	{ 2, "elementPrefix", "string", false, vital=true },
-	{ 3, "stateScriptAccess", "string", true, default="NO!" }
+    "staticGroupToLocalArray",
+    function(inst, attr, state, staticState, groupName, elementPrefix, stateScriptAccess)
+        local groupPath = glut.str_split(groupName, '.')
+        local success, groupTbl = glut.tbl_deepget(state, unpack(groupPath))
+        if not success then StaticGroupErr(groupName) end
+        inst:SetAttribute(elementPrefix .. "Count", #groupTbl)
+        local statescriptAccessor = "INIT #StateScriptAccessLocalArrayTemp 0"
+        for i, v in ipairs(groupTbl) do
+            statescriptAccessor = statescriptAccessor .. "\n SET #StateScriptAccessLocalArrayTemp #" .. elementPrefix .. tostring(i) 
+            inst:SetAttribute(elementPrefix .. tostring(i), v)
+        end
+        if stateScriptAccess ~= "NO!" then
+            inst:SetAttribute(stateScriptAccess, statescriptAccessor)
+        end
+        return true
+    end,
+    { 1, "groupName", "string", false, vital=true },
+    { 2, "elementPrefix", "string", false, vital=true },
+    { 3, "stateScriptAccess", "string", true, default="NO!" }
 )
 
 luaExprFuncs.importStaticGroup = ExprFunc(
-	"importStaticGroup",
-	function(inst, attr, state, staticState, groupName, importLocation, allowDuplicates)
-		local importPath = glut.str_split(importLocation, '.')
-		local importKey = table.remove(importPath)
-		local success, importTbl = glut.tbl_deepget(state, true, unpack(importPath))
-		if not success then StaticGroupErr(importPath) end
-		if importTbl[importKey] ~= nil then return end
-		local groupPath = glut.str_split(groupName, '.')
-		local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
-		if not success then StaticGroupErr(groupName) end
-		groupTbl = glut.tbl_clone(groupTbl, false)
-		if not allowDuplicates then
-			local noDupes = {}
-			for k, v in pairs(groupTbl) do
-				if table.find(noDupes, v) ~= nil then continue end
-				if type(k) == "number" then table.insert(noDupes, v) continue end
-				noDupes[k] = v
-			end
-			groupTbl = noDupes
-		end
-		importTbl[importKey] = groupTbl
-		return true
-	end,
-	{ 1, "groupName", "string", false, vital=true },
-	{ 2, "importLocation", "string", false, vital=true },
-	{ 3, "allowDuplicates", "boolean", true, default=true }
+    "importStaticGroup",
+    function(inst, attr, state, staticState, groupName, importLocation, allowDuplicates)
+        local importPath = glut.str_split(importLocation, '.')
+        local importKey = table.remove(importPath)
+        local success, importTbl = glut.tbl_deepget(state, true, unpack(importPath))
+        if not success then StaticGroupErr(importPath) end
+        if importTbl[importKey] ~= nil then return end
+        local groupPath = glut.str_split(groupName, '.')
+        local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
+        if not success then StaticGroupErr(groupName) end
+        groupTbl = glut.tbl_clone(groupTbl, false)
+        if not allowDuplicates then
+            local noDupes = {}
+            for k, v in pairs(groupTbl) do
+                if table.find(noDupes, v) ~= nil then continue end
+                if type(k) == "number" then table.insert(noDupes, v) continue end
+                noDupes[k] = v
+            end
+            groupTbl = noDupes
+        end
+        importTbl[importKey] = groupTbl
+        return true
+    end,
+    { 1, "groupName", "string", false, vital=true },
+    { 2, "importLocation", "string", false, vital=true },
+    { 3, "allowDuplicates", "boolean", true, default=true }
 )
 
 luaExprFuncs.staticGroupExport = ExprFunc(
-	"staticGroupExport",
-	function(inst, attr, state, staticState, groupName, exportValue, allowDuplicates)
-		-- Exports a variable as a member of a staticState group, creating the group if it does not exist
-		local groupPath = glut.str_split(groupName, '.')
-		local success, groupTbl = glut.tbl_deepget(staticState, true, unpack(groupPath))
-		if not success then StaticGroupErr(groupName) end
-		if not allowDuplicates then
-			if table.find(groupTbl, exportValue) then return exportValue end
-		end
-		table.insert(groupTbl, exportValue)
-		return exportValue
-	end,
-	{ 1, "groupName", "string", false, vital=true },
-	{ 2, "exportValue", false, false, vital=true },
-	{ 3, "allowDuplicates", "boolean", true, default=false }
+    "staticGroupExport",
+    function(inst, attr, state, staticState, groupName, exportValue, allowDuplicates)
+        -- Exports a variable as a member of a staticState group, creating the group if it does not exist
+        local groupPath = glut.str_split(groupName, '.')
+        local success, groupTbl = glut.tbl_deepget(staticState, true, unpack(groupPath))
+        if not success then StaticGroupErr(groupName) end
+        if not allowDuplicates then
+            if table.find(groupTbl, exportValue) then return exportValue end
+        end
+        table.insert(groupTbl, exportValue)
+        return exportValue
+    end,
+    { 1, "groupName", "string", false, vital=true },
+    { 2, "exportValue", false, false, vital=true },
+    { 3, "allowDuplicates", "boolean", true, default=false }
 )
 
 luaExprFuncs.staticGroupCombine = ExprFunc(
-	"staticGroupCombine",
-	function(
-		inst, attr, state, staticState,
-		groupName,
-		combineOp,
-		prefix,
-		suffix,
-		field,
-		itemPrefix,
-		itemSuffix,
-		autoBrackets
-	)
-		-- Concatenates the string representation of all members of a staticState group, using the specified operator inbetween all elements
-		local groupPath = glut.str_split(groupName, '.')
-		local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
-		if not success then StaticGroupErr(groupName) end
-		local openBracket = autoBrackets and "(" or ""
-		local closeBracket = autoBrackets and ")" or ""
-		local str = prefix .. openBracket
-		for i, v in ipairs(groupTbl) do
-			if i ~= 1 then str = str .. combineOp end
-			local vStr = (field == nil) and tostring(v) or tostring(v[field])
-			str = str .. itemPrefix .. vStr .. itemSuffix
-		end
-		str = str .. closeBracket .. suffix
-		return str
-	end,
-	{ 1, "groupName", "string", false, vital=true },
-	{ 2, "combineOp", "string", false, vital=true },
-	{ 3, "prefix", "string", true, default="" },
-	{ 4, "suffix", "string", true, default="" },
-	{ 5, "field", false, true, default=nil },
-	{ 6, "itemPrefix", "string", true, default="" },
-	{ 7, "itemSuffix", "string", true, default="" },
-	{ 8, "autoBrackets", "boolean", true, default=true }
+    "staticGroupCombine",
+    function(
+        inst, attr, state, staticState,
+        groupName,
+        combineOp,
+        prefix,
+        suffix,
+        field,
+        itemPrefix,
+        itemSuffix,
+        autoBrackets
+    )
+        -- Concatenates the string representation of all members of a staticState group, using the specified operator inbetween all elements
+        local groupPath = glut.str_split(groupName, '.')
+        local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
+        if not success then StaticGroupErr(groupName) end
+        local openBracket = autoBrackets and "(" or ""
+        local closeBracket = autoBrackets and ")" or ""
+        local str = prefix .. openBracket
+        for i, v in ipairs(groupTbl) do
+            if i ~= 1 then str = str .. combineOp end
+            local vStr = (field == nil) and tostring(v) or tostring(v[field])
+            str = str .. itemPrefix .. vStr .. itemSuffix
+        end
+        str = str .. closeBracket .. suffix
+        return str
+    end,
+    { 1, "groupName", "string", false, vital=true },
+    { 2, "combineOp", "string", false, vital=true },
+    { 3, "prefix", "string", true, default="" },
+    { 4, "suffix", "string", true, default="" },
+    { 5, "field", false, true, default=nil },
+    { 6, "itemPrefix", "string", true, default="" },
+    { 7, "itemSuffix", "string", true, default="" },
+    { 8, "autoBrackets", "boolean", true, default=true }
 )
 
 luaExprFuncs.staticGroupEmpty = ExprFunc(
-	"staticGroupEmpty",
-	function(inst, attr, state, staticState, groupName, quietFail)
-		-- Returns true if the StaticStateGroup at the given path is empty
-		return luaExprFuncs.staticGroupSize(inst, attr, state, staticState, { groupName, quietFail=quietFail }) == 0
-	end,
-	{ 1, "groupName", "string", false, vital=true },
-	{ 2, "quietFail", "boolean", true, default=false }
+    "staticGroupEmpty",
+    function(inst, attr, state, staticState, groupName, quietFail)
+        -- Returns true if the StaticStateGroup at the given path is empty
+        return luaExprFuncs.staticGroupSize(inst, attr, state, staticState, { groupName, quietFail=quietFail }) == 0
+    end,
+    { 1, "groupName", "string", false, vital=true },
+    { 2, "quietFail", "boolean", true, default=false }
 ) 
 
 luaExprFuncs.staticGroupSize = ExprFunc( 
-	"staticGroupSize",
-	function(inst, attr, state, staticState, groupName, asString, quietFail)
-		-- Returns the size of the StaticStateGroup at the given path - optionally as a string
-		local groupPath = glut.str_split(groupName, '.')
-		local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
-		if not success and not quietFail then
-			StaticGroupErr(groupName)
-		elseif not success then
-			return 0
-		end
-		return (asString and tostring(#groupTbl)) or #groupTbl
-	end,
-	{ 1, "groupName", "string", false, vital=true },
-	{ 2, "asString", "boolean", true, default=false },
-	{ 3, "quietFail", "boolean", true, default=false }
+    "staticGroupSize",
+    function(inst, attr, state, staticState, groupName, asString, quietFail)
+        -- Returns the size of the StaticStateGroup at the given path - optionally as a string
+        local groupPath = glut.str_split(groupName, '.')
+        local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
+        if not success and not quietFail then
+            StaticGroupErr(groupName)
+        elseif not success then
+            return 0
+        end
+        return (asString and tostring(#groupTbl)) or #groupTbl
+    end,
+    { 1, "groupName", "string", false, vital=true },
+    { 2, "asString", "boolean", true, default=false },
+    { 3, "quietFail", "boolean", true, default=false }
 )
 
 luaExprFuncs.moveFirstStaticElement = ExprFunc(
-	"moveFirstStaticElement",
-	function(
-		inst, attr, state, staticState,
-		groupName,
-		destName,
-		pairItem,
-		quietFail
-	)
-		-- Removes the first element of the StaticStateGroup at the given path, and places it
-		if pairItem ~= 'k' and pairItem ~= 'v' then error("pairItem must be nil|\"k\"|\"v\"!") end
-		local groupPath = glut.str_split(groupName, '.')
-		local destPath = glut.str_split(destName, '.')
-		local destKey = table.remove(destPath, #destPath)
-		local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
-		if not success then StaticGroupErr(groupName) end
-		local success, destTbl = glut.tbl_deepget(staticState, true, unpack(destPath))
-		if not success then StaticGroupErr(destName) end
-		local groupKeys = glut.tbl_getkeys(groupTbl)
-		local firstKey = groupKeys[1]
-		if firstKey == nil and quietFail then return true end
-		local moving = nil
-		if type(firstKey) == "number" then 
-			moving = table.remove(groupTbl, firstKey)
-		else 
-			moving = groupTbl[firstKey]
-			groupTbl[firstKey] = nil 
-		end
-		if pairItem == 'k' then moving = firstKey end
-		destTbl[destKey] = moving
-		return true
-	end,
-	{ 1, "groupName", "string", false, vital=true },
-	{ 2, "destinationName", "string", false, vital=true },
-	{ 3, "pairItem", "string", true, default="v" },
-	{ 4, "quietFail", "boolean", true, default=false }
+    "moveFirstStaticElement",
+    function(
+        inst, attr, state, staticState,
+        groupName,
+        destName,
+        pairItem,
+        quietFail
+    )
+        -- Removes the first element of the StaticStateGroup at the given path, and places it
+        if pairItem ~= 'k' and pairItem ~= 'v' then error("pairItem must be nil|\"k\"|\"v\"!") end
+        local groupPath = glut.str_split(groupName, '.')
+        local destPath = glut.str_split(destName, '.')
+        local destKey = table.remove(destPath, #destPath)
+        local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
+        if not success then StaticGroupErr(groupName) end
+        local success, destTbl = glut.tbl_deepget(staticState, true, unpack(destPath))
+        if not success then StaticGroupErr(destName) end
+        local groupKeys = glut.tbl_getkeys(groupTbl)
+        local firstKey = groupKeys[1]
+        if firstKey == nil and quietFail then return true end
+        local moving = nil
+        if type(firstKey) == "number" then 
+            moving = table.remove(groupTbl, firstKey)
+        else 
+            moving = groupTbl[firstKey]
+            groupTbl[firstKey] = nil 
+        end
+        if pairItem == 'k' then moving = firstKey end
+        destTbl[destKey] = moving
+        return true
+    end,
+    { 1, "groupName", "string", false, vital=true },
+    { 2, "destinationName", "string", false, vital=true },
+    { 3, "pairItem", "string", true, default="v" },
+    { 4, "quietFail", "boolean", true, default=false }
 )
 
 luaExprFuncs.getStaticVariable = ExprFunc( 
-	"getStaticVariable",
-	function(inst, attr, state, staticState, varName)
-		local varPath = glut.str_split(varName, '.')
-		local varKey = table.remove(varPath, #varPath)
-		local success, varTbl = glut.tbl_deepget(staticState, false, unpack(varPath))
-		if not success then StaticGroupErr(varName) end
-		return varTbl[varKey]
-	end,
-	{ 1, "varName", "string", false, vital=true }
+    "getStaticVariable",
+    function(inst, attr, state, staticState, varName)
+        local varPath = glut.str_split(varName, '.')
+        local varKey = table.remove(varPath, #varPath)
+        local success, varTbl = glut.tbl_deepget(staticState, false, unpack(varPath))
+        if not success then StaticGroupErr(varName) end
+        return varTbl[varKey]
+    end,
+    { 1, "varName", "string", false, vital=true }
 )
 
 luaExprFuncs.fallbackIfUnset = ExprFunc(
-	"fallbackIfUnset",
-	function(inst, attr, state, staticState, maybeUnset, fallback)
-		-- Returns the second argument if the first contains the substring "UNSET" (case-sensitive)
-		if maybeUnset == nil then return fallback end
-		if type(maybeUnset) ~= "string" then return maybeUnset end
-		if glut.str_has_match(maybeUnset, "UNSET") then return fallback end
-		if glut.str_has_match(maybeUnset, "DEFAULT") then return fallback end
-		return maybeUnset
-	end,
-	{ 1, "maybeUnset", false, false, default=nil },
-	{ 2, "fallback", false, false, default=nil }
+    "fallbackIfUnset",
+    function(inst, attr, state, staticState, maybeUnset, fallback)
+        -- Returns the second argument if the first contains the substring "UNSET" (case-sensitive)
+        if maybeUnset == nil then return fallback end
+        if type(maybeUnset) ~= "string" then return maybeUnset end
+        if glut.str_has_match(maybeUnset, "UNSET") then return fallback end
+        if glut.str_has_match(maybeUnset, "DEFAULT") then return fallback end
+        return maybeUnset
+    end,
+    { 1, "maybeUnset", false, false, default=nil },
+    { 2, "fallback", false, false, default=nil }
 )
 
 -- Convenience if you forget the name
 luaExprFuncs.fallbackIfDefault = ExprFuncOverload(
-	"fallbackIfDefault",
-	function(inst, attr, state, staticState, overload, maybeUnset, fallback)
-		return overload()
-	end,
-	{ 1, "maybeUnset", false, false, default=nil },
-	{ 2, "fallback", false, false, default=nil }
+    "fallbackIfDefault",
+    function(inst, attr, state, staticState, overload, maybeUnset, fallback)
+        return overload()
+    end,
+    { 1, "maybeUnset", false, false, default=nil },
+    { 2, "fallback", false, false, default=nil }
 )
 
 luaExprFuncs.CreateExprFenv = function(inst, attrName, instState, staticState, globalState)
-	return setmetatable(
-		{},
-		{
-			__index = function(t, k)
-				if instState[k] ~= nil then return instState[k] end
-				if k == "Global" or k == "Globals" then return globalState end
-				if luaExprFuncs[k] == nil then error(`Attempt to index state with {k}, found nil`) end
-				return function(t)
-					return luaExprFuncs[k](inst, attrName, instState, staticState, t)
-				end
-			end,
-		}
-	)
+    return setmetatable(
+        {},
+        {
+            __index = function(t, k)
+                if instState[k] ~= nil then return instState[k] end
+                if k == "Global" or k == "Globals" then return globalState end
+                if luaExprFuncs[k] == nil then error(`Attempt to index state with {k}, found nil`) end
+                return function(t)
+                    return luaExprFuncs[k](inst, attrName, instState, staticState, t)
+                end
+            end,
+        }
+    )
 end
 
 return luaExprFuncs]]></ProtectedString>
@@ -784,55 +784,55 @@ local exprFuncs = require("./LuaExprFuncs")
 local ShebangFuncs = {}
 
 ShebangFuncs.CreateShebangFenv = function(inst, attrName, instState, staticState, globalState)
-	local tableLib = glut.tbl_clone(table)
-	local stringLib = glut.tbl_clone(string)
+    local tableLib = glut.tbl_clone(table)
+    local stringLib = glut.tbl_clone(string)
 
-	stringLib.split = glut.str_split
-	tableLib.getkeys = glut.tbl_getkeys
-	
-	local luaExprFuncs = setmetatable(
-		{},
-		{
-			__index = function(tbl, k)
-				return function(targs)
-					return exprFuncs[k](inst, attrName, instState, staticState, targs)
-				end
-			end,
-		}
-	)
-	
-	local fenvBase = {
-		exprFuncs 	  = luaExprFuncs,
-		luaExprFuncs  = luaExprFuncs,
-		global 		  = globalState,
-		globals 	  = globalState,
-		globalState   = globalState,
-		state 		  = instState,
-		static 		  = staticState,
-		staticState   = staticState,
-		math 		  = math,
-		table 		  = tableLib,
-		string 		  = stringLib,
-		CFrame 		  = CFrame,
-		Color3 		  = Color3,
-		Vector2 	  = Vector2,
-		Vector3 	  = Vector3,
-		tostring 	  = tostring,
-		tonumber 	  = tonumber,
-		pairs 		  = pairs,
-		ipairs 		  = ipairs,
-		next 		  = next,
-		print 		  = print,
-		unpack 		  = unpack,
-		setAttributes = function(t) for k, v in pairs(t) do inst:SetAttribute(k, v) end return true end
-	}
+    stringLib.split = glut.str_split
+    tableLib.getkeys = glut.tbl_getkeys
 
-	-- state can't overshadow builtin libraries
-	setmetatable(
-		fenvBase,
-		{ __index = instState }
-	)
-	return fenvBase
+    local luaExprFuncs = setmetatable(
+        {},
+        {
+            __index = function(tbl, k)
+                return function(targs)
+                    return exprFuncs[k](inst, attrName, instState, staticState, targs)
+                end
+            end,
+        }
+    )
+
+    local fenvBase = {
+        exprFuncs     = luaExprFuncs,
+        luaExprFuncs  = luaExprFuncs,
+        global        = globalState,
+        globals       = globalState,
+        globalState   = globalState,
+        state         = instState,
+        static        = staticState,
+        staticState   = staticState,
+        math          = math,
+        table         = tableLib,
+        string        = stringLib,
+        CFrame        = CFrame,
+        Color3        = Color3,
+        Vector2       = Vector2,
+        Vector3       = Vector3,
+        tostring      = tostring,
+        tonumber      = tonumber,
+        pairs         = pairs,
+        ipairs        = ipairs,
+        next          = next,
+        print         = print,
+        unpack        = unpack,
+        setAttributes = function(t) for k, v in pairs(t) do inst:SetAttribute(k, v) end return true end
+    }
+
+    -- state can't overshadow builtin libraries
+    setmetatable(
+        fenvBase,
+        { __index = instState }
+    )
+    return fenvBase
 end
 
 return ShebangFuncs
@@ -850,11 +850,11 @@ return ShebangFuncs
 			<Properties>
 				<Content name="LinkedSource"><null></null></Content>
 				<ProtectedString name="Source"><![CDATA[return {
-	FolderPath 		= { "PrefabInstances" },
-	ValidClasses 	= { "BasePart" },
-	ImportsGlobals 	= false,
-	FolderRelation 	= "descendant",
-	TypeIsAttribute = "PrefabName"
+    FolderPath      = { "PrefabInstances" },
+    ValidClasses    = { "BasePart" },
+    ImportsGlobals  = false,
+    FolderRelation  = "descendant",
+    TypeIsAttribute = "PrefabName"
 }]]></ProtectedString>
 				<string name="ScriptGuid">{40183D36-6F16-44E7-AF38-F9E87356718B}</string>
 				<BinaryString name="AttributesSerialize"></BinaryString>

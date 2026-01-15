@@ -1,34 +1,93 @@
-local glut = require("./Lib/GLUt")
+local glut = require("../Lib/GLUt")
+local debbie = require("../Lib/DebbieDebug")
+local instanceMan = require("../InstanceManager")
 
 local luaExprFuncs = {}
 
-local function StaticGroupErr(groupName)
-    error("Attempt to set StaticStateGroup " .. groupName .. " but encountered non-table element!")
+local function stateGroupErr(operation, groupPath)
+    error("Attempted to " .. operation .. " State Group " .. groupPath .. " but encountered non-table element in path!")
+end
+
+local function stateValueErr(operation, valuePath)
+    error("Attempted to " .. operation .. " State Value" .. valuePath .. "but path is invalid!")
 end
 
 local function returnArgs(...) return ... end
 
 local function ExprFunc(fname, f, ...)
     local tblCallable = glut.fun_tblcallable(fname, returnArgs, ...)
-    return function(inst, attr, state, staticState, t)
-        return f(inst, attr, state, staticState, tblCallable(t))
+    return function(exprCtx, t)
+        return f(exprCtx, tblCallable(t))
     end
 end
 
 local function ExprFuncOverload(fname, f, foverloading, ...)
     local tblCallable = glut.fun_tblcallable(fname, returnArgs, ...)
-    return function(inst, attr, state, staticState, t)
-        local overloaded = function() return foverloading(inst, attr, state, staticState, t) end
-        return f(inst, attr, state, staticState, overloaded, tblCallable(t))
+    return function(exprCtx, t)
+        local overloaded = function() return foverloading(exprCtx, t) end
+        return f(exprCtx, overloaded, tblCallable(t))
     end
 end
 
-luaExprFuncs.Once = ExprFunc(
-    "Once",
-    function(inst, attr, state, staticState, ret, condition)
-        state._Once = state._Once or {}
-        if condition and not state._Once[attr] then
-            state._Once[attr] = true
+local function legacyArgUnpack(exprCtx)
+    local inst = exprCtx.PrefabElement
+    local attr = exprCtx.AttrName
+    local instState = exprCtx.InstanceState
+    local staticState = exprCtx.StaticState
+    return inst, attr, instState, staticState
+end
+
+local function getStateGroup(state, groupPath, quietFail, createIfNil)
+    createIfNil = glut.default(createIfNil, false)
+    
+    local groupKeys = glut.str_split(groupPath, '.')
+    local success, groupTbl = glut.tbl_deepget(state, createIfNil, unpack(groupKeys))
+    if not success and not quietFail then stateGroupErr("get", groupPath) end
+    if not success and quietFail then return nil end
+    return groupTbl, groupKeys
+end
+
+local function getStateValue(state, valuePath, quietFail, createIfNil)
+    createIfNil = glut.default(createIfNil, false)
+    
+    local destPath = glut.str_split(valuePath, '.')
+    local destKey = table.remove(destPath)
+    local success, groupTbl = glut.tbl_deepget(state, createIfNil, unpack(destPath))
+    
+    if not success and not quietFail then stateValueErr("get", valuePath) end
+    if not success and quietFail then return nil end
+    
+    return groupTbl[destKey]
+end
+
+local function setStateValue(state, valuePath, value)
+    local destPath = glut.str_split(valuePath, '.')
+    local destKey = table.remove(destPath)
+    
+    local success, groupTbl = glut.tbl_deepget(state, unpack(destPath))
+    if not success then stateValueErr("set", valuePath) end
+    
+    groupTbl[destKey] = value
+end
+
+local _methodTokens = {}
+local function storeMethodToken(methodName, obj, value)
+    _methodTokens[methodName] = _methodTokens[methodName] or glut.tbl_weak(true, false)
+    _methodTokens[methodName][obj] = value
+end
+
+local function getMethodToken(methodName, obj)
+    if _methodTokens[methodName] == nil then return nil end
+    return _methodTokens[methodName][obj]
+end
+
+luaExprFuncs.once = ExprFunc(
+    "once",
+    function(exprCtx, ret, condition)
+        local attr = exprCtx.AttrName
+        local inst = exprCtx.PrefabElement
+        if condition and not getMethodToken("once", inst) then
+            storeMethodToken("once", inst, true)
             return ret
         end
         return false
@@ -37,9 +96,71 @@ luaExprFuncs.Once = ExprFunc(
     { 2, "condition", "boolean", true, default=true }
 )
 
+luaExprFuncs.group_for = ExprFunc(
+    "group_for",
+    function(exprCtx, source, sink)
+        local inst = exprCtx.PrefabElement
+        local state = exprCtx.InstanceState
+        
+        local key = getMethodToken("group_for", state)
+        local staticGroup = getStateGroup(state, source)
+        local key, value = next(staticGroup, key)
+        storeMethodToken("group_for", state, key)
+        
+        setStateValue(state, sink, value)
+        return key == nil
+    end,
+    { 1, "source", "string", false, vital=true },
+    { 2, "sink", "string", false, vital=true }
+)
+
+luaExprFuncs.runScript = ExprFunc(
+    "runScript",
+    function(exprCtx, scriptPath)
+        local prefabData = exprCtx.PrefabData
+        local prefabFolder = prefabData.MainFolder
+        local prefabScopeData = prefabData.ScopeData
+        local dataScopeData = prefabScopeData.DATA
+        if dataScopeData == nil then
+            error("Attempt to run Prefab script but no group of type \"DATA\" found!")
+        end
+        
+        local dataFolder = dataScopeData.ScopeFolder
+        local toExec = instanceMan.PathTraverse(dataFolder, scriptPath)
+        if toExec == nil then
+            error(`Attempt to run Prefab script {scriptPath} but no such script exists under {prefabFolder}.{dataFolder.Parent}.{dataFolder}`)
+        end
+        
+        local attrName = exprCtx.AttrName
+        local success, n, args = glut.str_runlua(toExec.Source, exprCtx.ShebangFenv, attrName)
+        if not success then error(n) end
+        
+        return args[1]
+    end,
+    { 1, "scriptPath", "string", false, vital=true }
+)
+
+luaExprFuncs.thisProp = ExprFunc(
+    "thisProp",
+    function(exprCtx, propName)
+        local inst = exprCtx.PrefabElement
+        return inst[propName]
+    end,
+    { 1, "propName", "string", false, vital=true }
+)
+
+luaExprFuncs.thisAttr = ExprFunc(
+    "thisAttr",
+    function(exprCtx, attrName)
+        local inst = exprCtx.PrefabElement
+        return inst:GetAttribute(attrName)
+    end,
+    { 1, "attrName", "string", false, vital=true }
+)
+
 luaExprFuncs.tostring = ExprFunc(
     "tostring",
-    function(inst, attr, state, staticState, value)
+    function(exprCtx, value)
         return tostring(value)
     end,
     { 1, "value", false, false, vital=true }
@@ -47,7 +168,7 @@ luaExprFuncs.tostring = ExprFunc(
 
 luaExprFuncs.tonumber = ExprFunc(
     "tonumber",
-    function(inst, attr, state, staticState, str)
+    function(exprCtx, str)
         return tonumber(str)
     end,
     { 1, "str", "string", false, vital=true }
@@ -55,7 +176,7 @@ luaExprFuncs.tonumber = ExprFunc(
 
 luaExprFuncs.strsan = ExprFunc(
     "strsan",
-    function(inst, attr, state, staticState, str)
+    function(exprCtx, str)
         -- Sanitize a string for use as a global variable name
         if string.sub(str, 1, 1):match("^%d") then
             str = '_' .. str
@@ -67,7 +188,7 @@ luaExprFuncs.strsan = ExprFunc(
 
 luaExprFuncs.stror = ExprFunc(
     "stror",
-    function(inst, attr, state, staticState, condition, str1, str2)
+    function(exprCtx, condition, str1, str2)
         -- Selects one of two strings depending on the state of a condition variable
         -- Outputs str1 when condition == false
         -- Otherwise outputs str2
@@ -80,7 +201,8 @@ luaExprFuncs.stror = ExprFunc(
 
 luaExprFuncs.setAttributes = ExprFunc(
     "setAttributes",
-    function(inst, attr, state, staticState, attrs)
+    function(exprCtx, attrs)
+        local inst = exprCtx.PrefabElement
         for k, v in pairs(attrs) do
             inst:SetAttribute(k, v)
         end
@@ -91,7 +213,11 @@ luaExprFuncs.setAttributes = ExprFunc(
 
 luaExprFuncs.setStateValue = ExprFunc(
     "setStateValues",
-    function(inst, attr, state, staticState, name, value, override)
+    function(exprCtx, name, value, override)
+        local state = exprCtx.InstanceState
+        debbie.print(state)
+        debbie.print(name, value, override)
+        
         if state[name] ~= nil and not override then
             error("Attempt to set already-existing StateValue \"" .. name .. "\"!")
         end
@@ -105,7 +231,7 @@ luaExprFuncs.setStateValue = ExprFunc(
 
 luaExprFuncs.stringSplit = ExprFunc(
     "stringSplit",
-    function(inst, attr, state, staticState, value, separator)
+    function(exprCtx, value, separator)
         return glut.str_split(value, separator)
     end,
     { 1, "value", "string", false, vital=true },
@@ -114,16 +240,16 @@ luaExprFuncs.stringSplit = ExprFunc(
 
 luaExprFuncs.unpackToState = ExprFunc(
     "unpackToState",
-    function(inst, attr, state, staticState, unpacking, ...)
+    function(exprCtx, unpacking, ...)
+        local state = exprCtx.InstanceState
+        
         local locTbl = { ... }
         for i, v in ipairs(unpacking) do
             local locPath = locTbl[i]
             if locPath == nil then break end
             local unpackPath = glut.str_split(locPath, '.')
             local unpackLast = table.remove(unpackPath)
-            local success, unpackTbl = glut.tbl_deepget(state, true, unpack(unpackPath))
-            if not success then StaticGroupErr(locPath) end
-            unpackTbl[unpackLast] = v
+            setStateValue(state, locPath, v)
         end
         return true
     end,
@@ -150,10 +276,11 @@ luaExprFuncs.unpackToState = ExprFunc(
 
 luaExprFuncs.staticGroupToLocalArray = ExprFunc(
     "staticGroupToLocalArray",
-    function(inst, attr, state, staticState, groupName, elementPrefix, stateScriptAccess)
-        local groupPath = glut.str_split(groupName, '.')
-        local success, groupTbl = glut.tbl_deepget(state, unpack(groupPath))
-        if not success then StaticGroupErr(groupName) end
+    function(exprCtx, groupName, elementPrefix, stateScriptAccess, genAccessString)
+        local inst = exprCtx.PrefabElement
+        local state = exprCtx.InstanceState
+        
+        local groupTbl = getStateGroup(state, groupName, false)
         inst:SetAttribute(elementPrefix .. "Count", #groupTbl)
         local statescriptAccessor = "INIT #StateScriptAccessLocalArrayTemp 0"
         for i, v in ipairs(groupTbl) do
@@ -172,45 +299,56 @@ luaExprFuncs.staticGroupToLocalArray = ExprFunc(
 
 luaExprFuncs.importStaticGroup = ExprFunc(
     "importStaticGroup",
-    function(inst, attr, state, staticState, groupName, importLocation, allowDuplicates)
-        local importPath = glut.str_split(importLocation, '.')
-        local importKey = table.remove(importPath)
-        local success, importTbl = glut.tbl_deepget(state, true, unpack(importPath))
-        if not success then StaticGroupErr(importPath) end
-        if importTbl[importKey] ~= nil then return end
-        local groupPath = glut.str_split(groupName, '.')
-        local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
-        if not success then StaticGroupErr(groupName) end
+    function(exprCtx, groupName, importLocation, allowDuplicates, quietFail)
+        local inst = exprCtx.PrefabElement
+        local state = exprCtx.InstanceState
+        local staticState = exprCtx.StaticState
+        
+        local alreadyImported = getMethodToken("importStaticGroup", state)
+        if alreadyImported then return end
+        
+        local groupTbl = getStateGroup(staticState, groupName, quietFail, false)
+        if groupTbl == nil then
+            setStateValue(state, importLocation, {})
+            return
+        end
         groupTbl = glut.tbl_clone(groupTbl, false)
+        
         if not allowDuplicates then
             local noDupes = {}
+            
             for k, v in pairs(groupTbl) do
                 if table.find(noDupes, v) ~= nil then continue end
                 if type(k) == "number" then table.insert(noDupes, v) continue end
+                
                 noDupes[k] = v
             end
+            
             groupTbl = noDupes
         end
-        importTbl[importKey] = groupTbl
-        return true
+        
+        storeMethodToken("importStaticGroup", state, true)
+        setStateValue(state, importLocation, groupTbl)
     end,
     { 1, "groupName", "string", false, vital=true },
     { 2, "importLocation", "string", false, vital=true },
-    { 3, "allowDuplicates", "boolean", true, default=true }
+    { 3, "allowDuplicates", "boolean", true, default=true },
+    { 4, "quietFail", "boolean", true, default=false }
 )
 
 luaExprFuncs.staticGroupExport = ExprFunc(
     "staticGroupExport",
-    function(inst, attr, state, staticState, groupName, exportValue, allowDuplicates)
+    function(exprCtx, groupName, exportValue, allowDuplicates)
         -- Exports a variable as a member of a staticState group, creating the group if it does not exist
-        local groupPath = glut.str_split(groupName, '.')
-        local success, groupTbl = glut.tbl_deepget(staticState, true, unpack(groupPath))
-        if not success then StaticGroupErr(groupName) end
-        if not allowDuplicates then
-            if table.find(groupTbl, exportValue) then return exportValue end
-        end
-        table.insert(groupTbl, exportValue)
-        return exportValue
+        local staticState = exprCtx.StaticState
+        
+        local group = getStateGroup(staticState, groupName, false, true)
+        
+        local isDupe = table.find(group, exportValue)
+        if not allowDuplicates and isDupe then return true end
+        
+        table.insert(group, exportValue)
+        return isDupe
     end,
     { 1, "groupName", "string", false, vital=true },
     { 2, "exportValue", false, false, vital=true },
@@ -220,7 +358,7 @@ luaExprFuncs.staticGroupExport = ExprFunc(
 luaExprFuncs.staticGroupCombine = ExprFunc(
     "staticGroupCombine",
     function(
-        inst, attr, state, staticState,
+        exprCtx,
         groupName,
         combineOp,
         prefix,
@@ -231,9 +369,10 @@ luaExprFuncs.staticGroupCombine = ExprFunc(
         autoBrackets
     )
         -- Concatenates the string representation of all members of a staticState group, using the specified operator inbetween all elements
-        local groupPath = glut.str_split(groupName, '.')
-        local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
-        if not success then StaticGroupErr(groupName) end
+        local staticState = exprCtx.StaticState
+        
+        local groupTbl = getStateGroup(staticState, groupName, false)
+        
         local openBracket = autoBrackets and "(" or ""
         local closeBracket = autoBrackets and ")" or ""
         local str = prefix .. openBracket
@@ -257,9 +396,9 @@ luaExprFuncs.staticGroupCombine = ExprFunc(
 
 luaExprFuncs.staticGroupEmpty = ExprFunc(
     "staticGroupEmpty",
-    function(inst, attr, state, staticState, groupName, quietFail)
+    function(exprCtx, groupName, quietFail)
         -- Returns true if the StaticStateGroup at the given path is empty
-        return luaExprFuncs.staticGroupSize(inst, attr, state, staticState, { groupName, quietFail=quietFail }) == 0
+        return luaExprFuncs.staticGroupSize(exprCtx, { groupName, quietFail=quietFail }) == 0
     end,
     { 1, "groupName", "string", false, vital=true },
     { 2, "quietFail", "boolean", true, default=false }
@@ -267,16 +406,21 @@ luaExprFuncs.staticGroupEmpty = ExprFunc(
 
 luaExprFuncs.staticGroupSize = ExprFunc( 
     "staticGroupSize",
-    function(inst, attr, state, staticState, groupName, asString, quietFail)
+    function(exprCtx, groupName, asString, quietFail)
         -- Returns the size of the StaticStateGroup at the given path - optionally as a string
-        local groupPath = glut.str_split(groupName, '.')
-        local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
-        if not success and not quietFail then
-            StaticGroupErr(groupName)
-        elseif not success then
-            return 0
+        debbie.print("staticGroupSize", groupName)
+        local staticState = exprCtx.StaticState
+        local group = getStateGroup(staticState, groupName, quietFail)
+        debbie.print(group)
+        
+        local size
+        if group == nil then
+            size = 0
+        else
+            size = #group
         end
-        return (asString and tostring(#groupTbl)) or #groupTbl
+        
+        return (asString and tostring(size)) or size
     end,
     { 1, "groupName", "string", false, vital=true },
     { 2, "asString", "boolean", true, default=false },
@@ -286,24 +430,31 @@ luaExprFuncs.staticGroupSize = ExprFunc(
 luaExprFuncs.moveFirstStaticElement = ExprFunc(
     "moveFirstStaticElement",
     function(
-        inst, attr, state, staticState,
-        groupName,
-        destName,
+        exprCtx,
+        groupPath,
+        destPath,
         pairItem,
         quietFail
     )
         -- Removes the first element of the StaticStateGroup at the given path, and places it
+        local staticState = exprCtx.StaticState
+        
         if pairItem ~= 'k' and pairItem ~= 'v' then error("pairItem must be nil|\"k\"|\"v\"!") end
-        local groupPath = glut.str_split(groupName, '.')
-        local destPath = glut.str_split(destName, '.')
-        local destKey = table.remove(destPath, #destPath)
-        local success, groupTbl = glut.tbl_deepget(staticState, false, unpack(groupPath))
-        if not success then StaticGroupErr(groupName) end
-        local success, destTbl = glut.tbl_deepget(staticState, true, unpack(destPath))
-        if not success then StaticGroupErr(destName) end
+        
+        local groupTbl, indexKeys = getStateGroup(staticState, groupPath, quietFail)
+        if groupTbl == nil then
+            return true
+        end
+        
         local groupKeys = glut.tbl_getkeys(groupTbl)
         local firstKey = groupKeys[1]
-        if firstKey == nil and quietFail then return true end
+        
+        if firstKey == nil and quietFail then
+            return true
+        elseif firstKey == nil then
+            error("StaticGroup " .. groupPath .. " has no elements")
+        end
+        
         local moving = nil
         if type(firstKey) == "number" then 
             moving = table.remove(groupTbl, firstKey)
@@ -311,8 +462,9 @@ luaExprFuncs.moveFirstStaticElement = ExprFunc(
             moving = groupTbl[firstKey]
             groupTbl[firstKey] = nil 
         end
+        
         if pairItem == 'k' then moving = firstKey end
-        destTbl[destKey] = moving
+        setStateValue(staticState, destPath, moving)
         return true
     end,
     { 1, "groupName", "string", false, vital=true },
@@ -323,19 +475,17 @@ luaExprFuncs.moveFirstStaticElement = ExprFunc(
 
 luaExprFuncs.getStaticVariable = ExprFunc( 
     "getStaticVariable",
-    function(inst, attr, state, staticState, varName)
-        local varPath = glut.str_split(varName, '.')
-        local varKey = table.remove(varPath, #varPath)
-        local success, varTbl = glut.tbl_deepget(staticState, false, unpack(varPath))
-        if not success then StaticGroupErr(varName) end
-        return varTbl[varKey]
+    function(exprCtx, valuePath, quietFail)
+        local staticState = exprCtx.StaticState
+        return getStateValue(staticState, valuePath, quietFail)
     end,
-    { 1, "varName", "string", false, vital=true }
+    { 1, "valuePath", "string", false, vital=true },
+    { 2, "quietFail", "boolean", true, default=false }
 )
 
 luaExprFuncs.fallbackIfUnset = ExprFunc(
     "fallbackIfUnset",
-    function(inst, attr, state, staticState, maybeUnset, fallback)
+    function(exprCtx, maybeUnset, fallback)
         -- Returns the second argument if the first contains the substring "UNSET" (case-sensitive)
         if maybeUnset == nil then return fallback end
         if type(maybeUnset) ~= "string" then return maybeUnset end
@@ -350,27 +500,27 @@ luaExprFuncs.fallbackIfUnset = ExprFunc(
 -- Convenience if you forget the name
 luaExprFuncs.fallbackIfDefault = ExprFuncOverload(
     "fallbackIfDefault",
-    function(inst, attr, state, staticState, overload, maybeUnset, fallback)
+    function(exprCtx, overload, maybeUnset, fallback)
         return overload()
     end,
     { 1, "maybeUnset", false, false, default=nil },
     { 2, "fallback", false, false, default=nil }
 )
 
-luaExprFuncs.CreateExprFenv = function(inst, attrName, instState, staticState, globalState)
-    return setmetatable(
-        {},
-        {
-            __index = function(t, k)
-                if instState[k] ~= nil then return instState[k] end
-                if k == "Global" or k == "Globals" then return globalState end
-                if luaExprFuncs[k] == nil then error(`Attempt to index state with {k}, found nil`) end
-                return function(t)
-                    return luaExprFuncs[k](inst, attrName, instState, staticState, t)
-                end
-            end,
-        }
-    )
+luaExprFuncs.CreateExprFenv = function(evalContext)
+    local fenvMeta = { }
+    fenvMeta.__index = function(t, k)
+        local result = evalContext.InstanceState[k]
+        if result ~= nil then return result end
+        if k:match("^Globals?$") then return evalContext.GlobalState end
+        if luaExprFuncs[k] == nil then return nil end
+        
+        return function(t)
+            return luaExprFuncs[k](evalContext, t)
+        end
+    end
+    
+    return setmetatable({}, fenvMeta)
 end
 
 return luaExprFuncs

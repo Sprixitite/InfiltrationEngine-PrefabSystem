@@ -26,13 +26,27 @@ local function newPriorityLevel(major)
     end
 end
 
-local DEBUG_PRIORITY_LEVEL   = newPriorityLevel(1) -- Priority of debug type attributes
-local EXEC_PRIORITY_LEVEL    = newPriorityLevel(2) -- Priority of exec type attributes
-local ORDERED_PRIORITY_LEVEL = newPriorityLevel(3) -- Priority of attributes with an explicit ordering
-local STD_PRIORITY_LEVEL     = newPriorityLevel(4) -- Priority of unordered attributes
-local THIS_PRIORITY_LEVEL    = newPriorityLevel(5) -- Priority of this type attributes
+local DEBUG_PRIORITY_LEVEL   = newPriorityLevel(0) -- Priority of debug type attributes
+local ESCAPE_PRIORITY_LEVEL  = newPriorityLevel(1) -- Priority of escape type attributes
+local STATE_PRIORITY_LEVEL   = newPriorityLevel(2) -- Priority of state attributes
+local EXEC_PRIORITY_LEVEL    = newPriorityLevel(3) -- Priority of exec type attributes
+local ORDERED_PRIORITY_LEVEL = newPriorityLevel(4) -- Priority of attributes with an explicit ordering
+local STD_PRIORITY_LEVEL     = newPriorityLevel(5) -- Priority of unordered attributes
+local THIS_PRIORITY_LEVEL    = newPriorityLevel(6) -- Priority of this type attributes
 
-local function newScope(tbl: { Name: string, PriorityLevel: (number) -> number, PriorityPattern: string?, ScopePattern: string?, TargetPattern: string?, IsSpecial: boolean? })
+local function newScope(
+    tbl: { 
+        Name: string, 
+        PriorityLevel: (number) -> number, 
+        PriorityPattern: string?, 
+        ScopePattern: string?, 
+        TargetPattern: string?, 
+        IsSpecial: boolean?,
+        MayBeNil: boolean?,
+        ShouldEval: boolean?,
+        Deprecated: string?
+    }
+)
     tbl.PriorityPattern = glut.default(tbl.PriorityPattern, priorityPatterns.NUMERIC)
     tbl.ScopePattern    = glut.default(
                                        tbl.ScopePattern,
@@ -40,6 +54,8 @@ local function newScope(tbl: { Name: string, PriorityLevel: (number) -> number, 
                                       )
     tbl.TargetPattern   = glut.default(tbl.TargetPattern  , `[^%.]+$`)
     tbl.IsSpecial       = glut.default(tbl.IsSpecial, true)
+    tbl.CaresForArgs    = glut.default(tbl.CaresForArgs, true)
+    tbl.ShouldEval      = glut.default(tbl.ShouldEval, true)
     return tbl
 end
 
@@ -48,17 +64,29 @@ local SCOPES = {
                               Name = "this",
                               PriorityLevel = THIS_PRIORITY_LEVEL
                             },
+    STATE         = newScope{
+                              Name = "scope",
+                              PriorityLevel = STATE_PRIORITY_LEVEL
+                            },
     EXEC          = newScope{
                               Name = "exec",
-                              PriorityLevel = EXEC_PRIORITY_LEVEL
+                              PriorityLevel = EXEC_PRIORITY_LEVEL,
+                              MayBeNil      = true,
+                              CaresForArgs  = false
                             },
-    IGNORE        = newScope{ Name = "ignore" },
+    IGNORE        = newScope{ Name = "ignore", Deprecated = "Superceded by exec type - swap attribute type from \"ignore\" to \"exec\"" },
     PEVAL         = newScope{ Name = "peval" },
     NOIMP         = newScope{ Name = "noimp" },
     IMPONLY       = newScope{ Name = "imponly" },
     DEBUG         = newScope{ 
                               Name = "debug",
                               PriorityLevel = DEBUG_PRIORITY_LEVEL
+                            },
+    ESCAPE        = newScope{
+                              Name = "escape",
+                              PriorityLevel   = ESCAPE_PRIORITY_LEVEL,
+                              PriorityPattern = false,
+                              ShouldEval = false
                             },
     ["@STANDARD"] = newScope{
                               Name          = "@standard",

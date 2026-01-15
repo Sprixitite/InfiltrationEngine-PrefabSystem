@@ -136,7 +136,7 @@ APIConsumer.DoAPILoop = function<StateT>(
         if pluginUnloadCallback then pluginUnloadCallback:Disconnect() pluginUnloadCallback = nil end
         unloadedClbck(api, state)
     end)
-    
+
     unloadedCallback.Event:Wait()
     unloadedCallback:Destroy()
     APIConsumer.DoAPILoop(callerPlugin, srcname, loadedClbck, unloadedClbck, state)

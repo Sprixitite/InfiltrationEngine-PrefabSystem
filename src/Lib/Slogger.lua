@@ -28,28 +28,28 @@ end
 function slogger.new(...)
     local loggerPrefix = ""
     local varargsIter, argsTbl = varargs(...)
-    
+
     for i, arg in varargsIter do
         loggerPrefix = loggerPrefix .. tostring(arg) .. " : "
     end
-    
+
     local doWarn = function(tbl, ...)
         local finalMsg = ""
-        
+
         for i, arg, argCount in varargs(...) do
             finalMsg = finalMsg .. tostring(arg)
             if i ~= argCount then
                 finalMsg = finalMsg .. " : "
             end
         end
-        
+
         sloggerCfg.logFunc(loggerPrefix .. finalMsg)
     end
-    
+
     local specialize = function(...)
         return slogger.new(unpack(argsTbl), ...)
     end
-    
+
     local newLogger = setmetatable({ specialize = specialize }, {__call = doWarn})
     return sloggerCfg.postInit(newLogger)
 end

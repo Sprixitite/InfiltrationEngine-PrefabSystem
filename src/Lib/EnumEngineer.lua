@@ -107,7 +107,7 @@ end
 
 function enumItem.__tostring(t)
     local enumName = enumData.get(rawget(t, "Enum")).Name
-    
+
     local selfName = rawget(t, "Name")
     local selfId   = rawget(t, "Id")
     local selfVal  = rawget(t, "Value")
@@ -128,11 +128,11 @@ local function enumIndex(t, k)
     if enumMethod == EnumEngineer.new then
         return nil
     end
-    
+
     if enumMethod == nil then
         error(
             "Attempted to index Enum for \"" .. tostring(k) .. "\" but no such EnumItem or Method exists!\n" .. 
-            "Enum is as follows: " .. tostring(t)
+                "Enum is as follows: " .. tostring(t)
         )
     end
     return enumMethod
@@ -146,7 +146,7 @@ local function enumTostring(t)
     local i = 0
     local n = #t
     local enumItems = enumData.get(t).ItemsDict
-    
+
     local strRep = "Enum \"" .. EnumEngineer.get_name(t) .. "\" { "
     for k, _ in pairs(enumItems) do
         i = i + 1
@@ -155,7 +155,7 @@ local function enumTostring(t)
             strRep = strRep .. ", "
         end
     end
-    
+
     return strRep .. " }"
 end
 
@@ -171,37 +171,37 @@ local function newEnum(name, itemMethods)
         enumMeta = {}
         setmetatable(enumObj, enumMeta)
     end
-    
+
     enumMeta.__index    = enumIndex
     enumMeta.__newindex = enumNewIndex
     enumMeta.__len      = enumLen
     enumMeta.__tostring = enumTostring
-    
+
     enumData.new(enumObj, name, {}, itemMethods, false)
-    
+
     return enumObj
 end
 
 function EnumEngineer.new(name, items, itemMethods)
     items = items or {}
-    
+
     local enumObj = newEnum(name, itemMethods)
-    
+
     for name, value in pairs(items) do
         enumObj:add(name, value)
     end
-    
+
     return enumObj
 end
 
 function EnumEngineer.add(enum, name, value)
     local valid, enum_data = EnumEngineer.is_enum(enum)
     if not valid then error("First argument to EnumEngineer.add must be an Enum!") end
-    
+
     if enum_data.enumSeal then
         error("Attempt to add Enum Item to Sealed Enum \"" .. tostring(enum) .. "\"")
     end
-    
+
     local newItem = enumItem.new(enum, enum_data.ItemCount+1, name, value, enumItem.newMeta(enum_data.ItemMethods))
     enumData.add_item(enum, newItem)
 end

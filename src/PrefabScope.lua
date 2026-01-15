@@ -10,10 +10,11 @@ local PrefabScope = {}
 PrefabScope.ValidScopes = {
     STATIC   = { "Static"   },
     INSTANCE = { "Instance" },
-    REMOTE	 = { "Remote", "Extern", "Area" }
+    REMOTE   = { "Remote", "Extern", "Area" },
+    DATA     = { "Data", "PrefabData" }
 }
 
-function PrefabScope.GetScope(prefab, scopeName)
+function PrefabScope.GetScope(prefab: Folder, scopeName: string)
     return prefab:FindFirstChild(scopeName)
         or prefab:FindFirstChild(scopeName:upper())
         or prefab:FindFirstChild(scopeName:lower())
@@ -22,7 +23,7 @@ end
 function PrefabScope.GetScopeOfType(prefab, scopeType)
     scopeType = string.upper(scopeType)
     for _, scopeName in ipairs(PrefabScope.ValidScopes[scopeType]) do
-        
+
         local folder = PrefabScope.GetScope(prefab, scopeName)
         if folder then return folder end
     end
@@ -30,7 +31,7 @@ end
 
 function PrefabScope.GetAllScopes(prefab)
     local warn = warn.specialize("GetAllScopes")
-    
+
     local scopes = {}
     for _, folder in ipairs(prefab:GetChildren()) do
         if folder.Name:lower():match("_?disabled?$") ~= nil then continue end
@@ -40,7 +41,7 @@ function PrefabScope.GetAllScopes(prefab)
         end
         scopes[folderScope] = folder
     end
-    
+
     return scopes
 end
 
@@ -74,9 +75,9 @@ end
 function PrefabScope.GetAllSettingsInstances(prefabScope, excludeList)
     excludeList = excludeList or {}
     local excludeDict = {}
-    
+
     for _, name in ipairs(excludeList) do excludeDict[name] = true end
-    
+
     local found = {}
     for _, child in ipairs(prefabScope:GetChildren()) do
         if child:IsA("Folder") then continue end
@@ -84,6 +85,24 @@ function PrefabScope.GetAllSettingsInstances(prefabScope, excludeList)
         found[#found+1] = child
     end
     return found
+end
+
+function PrefabScope.GetData(scope)
+    local targets = {}
+    local scopeSettings = {}
+    for _, child in ipairs(scope:GetChildren()) do
+        if child:IsA("Folder") then
+            targets[child.Name] = child
+        else
+            scopeSettings[child.Name] = child
+        end
+    end
+    
+    return {
+        ScopeFolder = scope,
+        Targets = targets,
+        Settings = scopeSettings
+    }
 end
 
 return PrefabScope

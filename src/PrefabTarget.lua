@@ -8,11 +8,11 @@ end
 
 function PrefabTarget.UnpackToMission(prefabTarget, mission)
     local unpackingTo = PrefabTarget.ToMissionTarget(prefabTarget, mission)
-    
+
     for _, c in ipairs(prefabTarget:GetChildren()) do
         c:Clone().Parent = unpackingTo
     end
-    
+
     local folders = {}
     for _, c in ipairs(unpackingTo:GetChildren()) do
         if not c:IsA("Folder") then continue end
@@ -20,7 +20,7 @@ function PrefabTarget.UnpackToMission(prefabTarget, mission)
         local fName = folders[c.Name]
         fName[#fName+1] = c
     end
-    
+
     for _, needMerge in pairs(folders) do
         InstanceMan.MergeFolders(unpack(needMerge))
     end

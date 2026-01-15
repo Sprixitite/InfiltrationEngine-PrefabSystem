@@ -12,6 +12,35 @@ function LuaExpr.NewEvalRules(prefix, delim)
     }
 end
 
+local is_success = function(t)
+    return t.EvalGood
+end
+
+local args_good = function(t)
+    return t.ArgsGood
+end
+
+local worse_than = function(t, ot)
+    return t.Severity > ot.Severity
+end
+
+local newStatus = function(evalSuccess, argsValid, severity)
+    return { 
+        EvalGood = evalSuccess,
+        ArgsGood = argsValid,
+        Severity = severity,
+        
+        is_success = is_success,
+        args_good = args_good,
+        worse_than = worse_than
+    }
+end
+
+LuaExpr.Statuses = {}
+LuaExpr.Statuses.SUCCESS = newStatus(true, true, 0)
+LuaExpr.Statuses.SUCCESS_ARGWARN = newStatus(true, false, 1)
+LuaExpr.Statuses.FAILURE = newStatus(false, false, 2)
+
 local LUA_EXPR_MATCH_DEFAULT = LuaExpr.NewEvalRules("%$%(", "%)")
 
 local function isSoleExpr(str, rules)
@@ -22,24 +51,24 @@ end
 local function evalSoleExpr(str, fenv, rules, exprName, multiRet)
     exprName = glut.default_typed(exprName, "LUAEXPR_UNNAMED", "exprName", "LuaExpr.EvalSoleExpr")
     multiRet = glut.default_typed(multiRet, false, "multiRet", "LuaExpr.EvalSoleExpr")
-    
+
     local leadingReturn = string.match(str, "^return%s+")
     if leadingReturn == nil then str = "return " .. str end
-    
+
     local success, count, args = glut.str_runlua(str, fenv, exprName)
     if not success then
-        return false, "LuaExpr : " .. exprName .. " : Evaluation failed : " .. count
+        return LuaExpr.Statuses.FAILURE, nil, "LuaExpr : " .. exprName .. " : Evaluation failed : " .. count
     end
-    
+
     if multiRet then return success, args end
-    
+
     if count < 1 then
-        return false, "LuaExpr : " .. exprName .. " : Evaluation Succeeded But Return Invalid : Expected 1 return, got " .. count
+        return LuaExpr.Statuses.SUCCESS_ARGWARN, nil, "LuaExpr : " .. exprName .. " : Evaluation Succeeded But Return Invalid : Expected 1 return, got " .. count
     elseif count > 1 then
-        return false, "LuaExpr : " .. exprName .. " : Evaluation Succeeded But Return Invalid : Expected 1 return, got " .. count
+        return LuaExpr.Statuses.SUCCESS_ARGWARN, nil, "LuaExpr : " .. exprName .. " : Evaluation Succeeded But Return Invalid : Expected 1 return, got " .. count
     end
-    
-    return success, args[1]
+
+    return LuaExpr.Statuses.SUCCESS, args[1]
 end
 
 function LuaExpr.IsExpr(str, rules)
@@ -51,22 +80,32 @@ end
 function LuaExpr.Eval(str, fenv, rules, exprName, soleOnly)
     if not glut.type_check(str, "string", "str", "LuaExpr.Eval") then return end
     if not glut.type_check(fenv, "table", "fenv", "LuaExpr.Eval") then return end
-    
+
     rules = glut.default_typed(rules, LUA_EXPR_MATCH_DEFAULT, "rules", "LuaExpr.Eval")
     exprName = glut.default_typed(exprName, "LUAEXPR_UNNAMED", "epxrName", "LuaExpr.Eval")
     soleOnly = glut.default_typed(soleOnly, false, "soleOnly", "LuaExpr.Eval")
-    
+
     local isSole, soleData = isSoleExpr(str, rules)
     if isSole then return evalSoleExpr(soleData, fenv, rules, exprName, soleOnly) end
     if soleOnly then return false, nil end
-    
+
     local i = 0
-    return true, string.gsub(str, rules.BodyMatch, function(subexpr)
+    local worstStatus = LuaExpr.Statuses.SUCCESS
+    local worstMsg = nil
+    local sub = string.gsub(str, rules.BodyMatch, function(subexpr)
         i = i+1
         local subExprName = exprName .. '#' .. tostring(i)
-        local evalSuccess, evalVal = evalSoleExpr(subexpr, fenv, rules, subExprName, false)
+        local status, evalVal = evalSoleExpr(subexpr, fenv, rules, subExprName, false)
+        if status ~= LuaExpr.Statuses.SUCCESS then
+            if status:worse_than(worstStatus) then
+                worstStatus = status
+                worstMsg = evalVal
+            end
+        end
         return tostring(evalVal)
     end)
+    
+    return worstStatus, sub, worstMsg
 end
 
 return LuaExpr

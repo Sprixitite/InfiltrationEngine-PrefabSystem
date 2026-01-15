@@ -204,7 +204,7 @@ function GLUt.str_runlua(source, fenv, chunkName)
         unidentified = unidentified + 1
         return "loadstring#" .. tostring(unidentified) 
     end)
-    
+
     local strFunc, failReason
     if loadstrCache[source] ~= nil then
         strFunc = loadstrCache[source]
@@ -218,9 +218,14 @@ function GLUt.str_runlua(source, fenv, chunkName)
     loadstrCache[source] = strFunc
 
     strFunc = setfenv(strFunc, fenv)
-    return pcall(function()
-        return GLUt.vararg_capture(strFunc())
-    end)
+    return xpcall(
+        function()
+            return GLUt.vararg_capture(strFunc())
+        end,
+        function(e)
+            return debug.traceback(e)
+        end
+    )
 end
 
 function GLUt.str_runlua_unsafe(source, chunkName)
@@ -229,9 +234,14 @@ function GLUt.str_runlua_unsafe(source, chunkName)
         return false, "Loadstring : " .. chunkName .. " : Evaluation failed : " .. failReason
     end
 
-    return pcall(function()
-        return GLUt.vararg_capture()
-    end)
+    return xpcall(
+        function()
+            return GLUt.vararg_capture(strFun())
+        end,
+        function(e)
+            return debug.traceback(e)
+        end
+    )
 end
 
 function GLUt.kvp_tostring(k, v)

@@ -1,5 +1,6 @@
-# InfiltrationEngine-PrefabSystem
+# DISCLAIMER
+This is a **PreRelease** branch of PrefabSystem, which may or may not include up-to-date source code!
 
-A system for packaging collections of distinct assets with the ergonomics of a single unique object, implemented via the InfiltrationEngine SerializerAPI  
+This will be uploaded as needed when someone (other than myself) requires early access to an as-of-yet unreleased plugin build
 
-This is offered as a sample for simple usage of the SerializerAPI via the provided APIConsumer module
+Please use the main branch if you are not sure you need this one - this branch may be experimental or may have untested code

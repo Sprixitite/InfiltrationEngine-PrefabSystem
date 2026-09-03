@@ -135,9 +135,9 @@ There are the deprecated types:
 
 And the standard types:
 - `peval`
-- `ignore`
 - `exec`
 - `debug`
+- `this`
 
 > [!CAUTION]
 > Import types are only for use on the InstanceBase, whereas standard types are only for use on anything inside of a Group Target, use outside of these guidelines may technically function but is not officially supported.
@@ -149,7 +149,7 @@ Import types determine how attribute defaults work with **SpongeZoneTools Attrib
 
 The deprecated types are holdovers from older versions of the plugin, and are not to be used, but for completeness will be explained here:
 - The `ignore` type causes any attribute belonging to it to be deleted following its evaluation. This is useful in conjunction with more advanced features, but has been superceded[^IgnoreSuperceded] by the `exec` type.
-[^IgnoreSuperceded]: The type still functions as of the current version, but may eventually be removed altogether. The reasoning for this is twofold: the name, and default priority settings. The `exec` type when not given an explicit priority will always run before other attributes, `ignore` does not have this behaviour.
+[^IgnoreSuperceded]: The type still functions as of the current version, but may eventually be removed altogether. Use `exec` instead.
 
 The standard types are much more interesting, operating as follows:
 - The `peval` type stands for "programmable evaluate", and is complicated enough it will have to be explained later[^ProgrammableRef].
@@ -163,12 +163,12 @@ The standard types are much more interesting, operating as follows:
 I hope this has been helpful, and that you can muster tuning into the follow up, "[Advanced Attributes](./2_0_AdvancedAttributes.md)". There we'll cover SFuncs, ShebangScripts, advanced attribute substitution expressions, and the `peval` attribute scope.
 
 A Massive Thanks To:
-- Qeutron
-- MrWD
-- PinkEmeraldd
-- Hydelics
-- Mrshepss
-- JustFreezey
+- Qeutron / I don't think he has a github
+- MrWD / [@WilliamDeGuzman](https://github.com/WilliamDeGuzman)
+- PinkEmeraldd / [@PinkEmeraldd](https://github.com/PinkEmeraldd)
+- Hydelics / [@SixGrainsofGravel](https://github.com/SixGrainsofGravel)
+- Mrshepss / [@mrshepss](https://github.com/mrshepss)
+- JustFreezey / [@JustFreezey](https://github.com/JustFreezey)
 
 For reviewing and providing feedback on this documentation.
 <sub>
@@ -194,7 +194,7 @@ If the text does not meet the above criteria, then the value is instead inserted
 ![Roblox Studio screenshot of a FreeTrigger, the attributes demonstrating the above points](./images/1_0/SubstitutionExample.png)
 
 In the above example (using [these](#instancebase-example-) InstanceBase settings), the `HoldTime` attribute will be set to whatever *number* `ToggleTime` is set to on the Prefab Instance  
-However the `SetValue` attribute will have `LampEnabledVariable` inserted inside, so if `LampEnabledVariable` was set to "Lamp1Enabled" the value would become `0 - (LampEnabledVariable - 1)`
+However the `SetValue` attribute will have `LampEnabledVariable` inserted inside, so if `LampEnabledVariable` was set to "Lamp1Enabled" the value would become `0 - (Lamp1Enabled - 1)`
 
 ## Attribute Type Example - `this` ([↩](#leave-this-attr-example))
 Setting a `this.CFrame` attribute on a Part will replace the Part's CFrame when evaluating the attributes, this can be used in conjunction with settings on your prefab to change instance properties with prefab settings  
